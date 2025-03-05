@@ -1,0 +1,62 @@
+import { EventBase, EventRouter, IEvent } from "../../src";
+
+describe("EventRouter TEsts", () => {
+
+  it("initialises instance event router", () => {
+    const ier = new EventRouter();
+    expect(ier).not.toBeNull();
+  });
+
+  it("configures event route", () => {
+    const ier = new EventRouter();
+    expect(ier).not.toBeNull();
+
+    ier.configureRoute(FooCreated.typename, (e: IEvent) => {
+      console.log(e);
+    });
+
+    // expect(eh._handlers).toMatchObject({
+    //   FooCreated: (e: IEvent) => {
+    //     console.log(e);
+    //   },
+    // });
+  });
+
+  it("routes event", () => {
+    const ier = new InstanceEventRouter();
+    expect(ier).not.toBeNull();
+
+    const handler = (e: IEvent) => {
+      console.log(e);
+    };
+
+    //const x = jest.fn()
+
+    ier.configureRoute(FooCreated.typename, handler);
+
+    ier.route(FooCreated.typename, new FooCreated("one", 2, "three"));
+
+    //expect(handler).toBeCalledTimes(1);
+  });
+});
+
+class FooCreated extends EventBase {
+  public static typename = "FooCreated";
+  constructor(
+    public readonly aggregateId: string,
+    public readonly timestamp: number,
+    public readonly name: string
+  ) {
+    super(aggregateId, timestamp, FooCreated.typename);
+  }
+}
+
+// class FooNameChanged extends EventBase {
+//   constructor(
+//     public readonly aggregateId: string,
+//     public readonly timestamp: number,
+//     public readonly name: string
+//   ) {
+//     super(aggregateId, timestamp, "FooNameChanged");
+//   }
+// }

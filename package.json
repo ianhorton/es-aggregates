@@ -1,0 +1,31 @@
+{
+  "name": "es-aggregates",
+  "version": "0.3.4",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "build": "run-s clean build:tsc",
+    "build:tsc": "tsc -b",
+    "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
+    "test": "jest --runInBand --detectOpenHandles --forceExit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.485.0",
+    "@aws-sdk/lib-dynamodb": "^3.485.0",
+    "@aws-sdk/util-dynamodb": "^3.485.0",
+    "@sailplane/logger": "^4.2.0",
+    "date-fns": "^2.26.0",
+    "date-fns-tz": "^1.1.6",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "@shelf/jest-dynamodb": "^3.4.4",
+    "@types/aws-lambda": "^8.10.131",
+    "@types/jest": "27.0.0",
+    "@types/uuid": "^8.3.3",
+    "jest": "27.0.0",
+    "npm-run-all": "^4.1.5",
+    "ts-jest": "27.0.0",
+    "typescript": "^4.5.3"
+  }
+}
