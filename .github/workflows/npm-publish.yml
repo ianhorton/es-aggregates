@@ -16,7 +16,7 @@ jobs:
       - run: yarn
       - run: yarn test
       - run: yarn build
-      - run: yarn version --patch
+      #- run: yarn version --patch
 
   # publish-npm:
   #   needs: build
