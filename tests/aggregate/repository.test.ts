@@ -28,7 +28,7 @@ describe("Repository Tests", () => {
   it("should handle writing and reading many events", async () => {
     const { ddbc, id, name, ar, repo } = await setupAndExecuteAsync(false);
 
-    for (let i1 = 0; i1 < 100; i1++) {
+    for (let i1 = 0; i1 < 200; i1++) {
       for (let i2 = 0; i2 < 100; i2++) {
         ar.changeName((`${i1}${i2}`));
       }
