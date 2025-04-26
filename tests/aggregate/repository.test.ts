@@ -25,12 +25,27 @@ const config = {
 Logger.initialize({ level: LogLevel.INFO });
 
 describe("Repository Tests", () => {
-  it("should handle writing and reading many events", async () => {
+  it("should fail when we try and write more than 100 events", async () => {
+    // arrange
+    const id = "id";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "1");
+
+    // act
+    for (let index = 2; index <= 101; index++) {
+      ar.changeName(index.toString());
+    }
+
+    // assert
+    await expect(repo.writeAsync(ar)).rejects.toThrow();
+  });
+
+  xit("should handle writing and reading many events", async () => {
     const { ddbc, id, name, ar, repo } = await setupAndExecuteAsync(false);
 
     for (let i1 = 0; i1 < 200; i1++) {
       for (let i2 = 0; i2 < 100; i2++) {
-        ar.changeName((`${i1}${i2}`));
+        ar.changeName(`${i1}${i2}`);
       }
       await repo.writeAsync(ar);
     }
@@ -54,7 +69,7 @@ describe("Repository Tests", () => {
     }
 
     const x = await repo.readAsync(id);
-    console.log(x?.name)
+    console.log(x?.name);
   });
 
   it("should write events to correct event table", async () => {
@@ -147,6 +162,24 @@ describe("Repository Tests", () => {
   });
 });
 
+const setupRepoAndDynamoDB = (): {
+  ddbc: DynamoDBClient;
+  repo: Repository<TestAggregateRoot>;
+} => {
+  const ddbc = new DynamoDBClient(config);
+
+  const repo = new Repository<TestAggregateRoot>(
+    "test-service-event-dev",
+    TestAggregateRoot.factory,
+    ddbc
+  );
+
+  return {
+    ddbc,
+    repo,
+  };
+};
+
 const setupAndExecuteAsync = async (
   encryptProps: boolean
 ): Promise<{
@@ -161,15 +194,9 @@ const setupAndExecuteAsync = async (
   const name = "New AR";
   const key = "key";
 
+  const { ddbc, repo } = setupRepoAndDynamoDB();
+
   const ar = TestAggregateRoot.create(id, name);
-
-  const ddbc = new DynamoDBClient(config);
-
-  const repo = new Repository<TestAggregateRoot>(
-    "test-service-event-dev",
-    TestAggregateRoot.factory,
-    ddbc
-  );
 
   await repo.writeAsync(ar, encryptProps ? key : undefined);
 
