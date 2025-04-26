@@ -4,7 +4,11 @@ import { v4 } from "uuid";
 import { Repository } from "../../src";
 
 import { TestAggregateRoot } from "../test-objects";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
 
 const config = {
@@ -21,6 +25,38 @@ const config = {
 Logger.initialize({ level: LogLevel.INFO });
 
 describe("Repository Tests", () => {
+  it("should handle writing and reading many events", async () => {
+    const { ddbc, id, name, ar, repo } = await setupAndExecuteAsync(false);
+
+    for (let i1 = 0; i1 < 100; i1++) {
+      for (let i2 = 0; i2 < 100; i2++) {
+        ar.changeName((`${i1}${i2}`));
+      }
+      await repo.writeAsync(ar);
+    }
+
+    const dc = DynamoDBDocumentClient.from(ddbc);
+
+    const command = new QueryCommand({
+      TableName: "test-service-event-dev",
+      KeyConditionExpression: "aggregateId = :aggregateId",
+      ExpressionAttributeValues: { ":aggregateId": id },
+      ConsistentRead: true,
+      ScanIndexForward: true,
+    });
+
+    const { Items } = await dc.send(command);
+
+    if (Items) {
+      expect(Items.length).toBe(5542);
+    } else {
+      fail("Event not found in database.");
+    }
+
+    const x = await repo.readAsync(id);
+    console.log(x?.name)
+  });
+
   it("should write events to correct event table", async () => {
     const { ddbc, id, name } = await setupAndExecuteAsync(false);
 
