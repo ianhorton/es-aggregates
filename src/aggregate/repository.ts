@@ -1,15 +1,19 @@
 import {
-    DynamoDBClient, Put, TransactWriteItem, TransactWriteItemsCommand, TransactWriteItemsInput,
-    TransactWriteItemsOutput
-} from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { marshall } from '@aws-sdk/util-dynamodb';
-import { Logger } from '@sailplane/logger';
+  DynamoDBClient,
+  Put,
+  TransactWriteItem,
+  TransactWriteItemsCommand,
+  TransactWriteItemsInput,
+  TransactWriteItemsOutput,
+} from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
+import { Logger, LogLevel } from "@sailplane/logger";
 
-import { IEvent } from '../event/models/event';
-import { IPersistedEvent } from '../event/models/persisted-event';
-import { AggregateRoot } from './aggregate-root';
-import { decrypt, encrypt } from './encryption';
+import { IEvent } from "../event/models/event";
+import { IPersistedEvent } from "../event/models/persisted-event";
+import { AggregateRoot } from "./aggregate-root";
+import { decrypt, encrypt } from "./encryption";
 
 const logger = new Logger("repository");
 
@@ -24,10 +28,13 @@ export interface IRepository<T extends AggregateRoot> {
 
 export class Repository<T extends AggregateRoot> implements IRepository<T> {
   constructor(
-    private eventTableName: string,
-    private activator: () => T,
-    private dynamoDBClient: DynamoDBClient
-  ) {}
+    private readonly eventTableName: string,
+    private readonly activator: () => T,
+    private readonly dynamoDBClient: DynamoDBClient,
+    readonly debug: boolean = false
+  ) {
+    logger.level = debug ? LogLevel.DEBUG : LogLevel.NONE;
+  }
 
   public readAsync = async (
     id: string,
