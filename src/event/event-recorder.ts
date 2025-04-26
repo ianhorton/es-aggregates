@@ -20,7 +20,11 @@ export class EventRecorder {
   }
 
   public record(event: IEvent): void {
-    // null checks
+    // if (this._recorded.length === 100) {
+    //   throw new Error(
+    //     "Event Recorder limit of 100 in memory changes exceeded. Consider writing changes with repository more frequently."
+    //   );
+    // }
     this._recorded.push(event);
   }
 
