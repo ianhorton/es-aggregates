@@ -4,14 +4,14 @@
 const config = {
   tables: [
     {
-      TableName: "test-service-event-dev",
+      TableName: "test-table",
       KeySchema: [
-        { AttributeName: "aggregateId", KeyType: "HASH" },
-        { AttributeName: "aggregateVersion", KeyType: "RANGE" },
+        { AttributeName: "pk", KeyType: "HASH" },
+        { AttributeName: "sk", KeyType: "RANGE" },
       ],
       AttributeDefinitions: [
-        { AttributeName: "aggregateId", AttributeType: "S" },
-        { AttributeName: "aggregateVersion", AttributeType: "N" },
+        { AttributeName: "pk", AttributeType: "S" },
+        { AttributeName: "sk", AttributeType: "S" },
       ],
       ProvisionedThroughput: { ReadCapacityUnits: 1, WriteCapacityUnits: 1 },
     },
