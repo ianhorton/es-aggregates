@@ -36,10 +36,10 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     logger.level = debug ? LogLevel.DEBUG : LogLevel.NONE;
   }
 
-  public readAsync = async (
+  public async readAsync(
     id: string,
     encryptionKey?: string
-  ): Promise<T | undefined> => {
+  ): Promise<T | undefined> {
     const events = await this.readEventsAsync(id, encryptionKey);
 
     if (events.length > 0) {
@@ -49,12 +49,9 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     }
 
     return undefined;
-  };
+  }
 
-  public writeAsync = async (
-    aggregate: T,
-    encryptionKey?: string
-  ): Promise<void> => {
+  public async writeAsync(aggregate: T, encryptionKey?: string): Promise<void> {
     const changes = aggregate.getChanges();
     logger.debug("Changes.", changes);
 
@@ -70,14 +67,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     logger.debug("Transact Write Items Output.", output);
 
     aggregate.clearChanges();
-  };
+  }
 
-  private changeProps = (
+  private changeProps(
     props: any,
     f: (data: string, key: string) => string,
     encryptionKey?: string,
     encryptedProps?: string[]
-  ): {} => {
+  ): {} {
     if (encryptionKey === undefined) return props;
     if (encryptedProps === undefined) return props;
 
@@ -86,14 +83,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       props[propertyName] = f(props[propertyName], encryptionKey);
     }
     return props;
-  };
+  }
 
-  private transactWriteAsync = async (
+  private async transactWriteAsync(
     aggregateId: string,
     changes: IEvent[],
     expectedVersion: number,
     encryptionKey?: string
-  ): Promise<TransactWriteItemsOutput> => {
+  ): Promise<TransactWriteItemsOutput> {
     const transactWriteItemList: TransactWriteItem[] = [];
 
     for (let index = 0; index < changes.length; index++) {
@@ -138,12 +135,12 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     const response = await documentClient.send(command);
 
     return response;
-  };
+  }
 
-  private readEventsAsync = async (
+  private async readEventsAsync  (
     aggregateId: string,
     encryptionKey?: string
-  ): Promise<IEvent[]> => {
+  ): Promise<IEvent[]>  {
     const command = new QueryCommand({
       TableName: this.eventTableName,
       KeyConditionExpression: "aggregateId = :aggregateId",
