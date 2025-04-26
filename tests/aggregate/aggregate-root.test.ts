@@ -89,4 +89,18 @@ describe("AggregateRoot Tests", () => {
     expect(() => ar.changeName("new name")).toThrow();
   });
 
+  it("should throw if we try and create more than 100 changes", () => {
+    // arrange
+    const id = v4();
+    const name = "1";
+    const ar = TestAggregateRoot.create(id, name);
+
+    // act
+    for (let index = 2; index <= 100; index++) {
+      ar.changeName(index.toString());
+    }
+
+    expect(() => ar.changeName("new name")).toThrow();
+  });
+
 });
