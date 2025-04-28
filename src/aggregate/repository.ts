@@ -6,7 +6,11 @@ import {
   TransactWriteItemsInput,
   TransactWriteItemsOutput,
 } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  QueryCommand,
+  QueryCommandOutput,
+} from "@aws-sdk/lib-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
 
@@ -137,25 +141,36 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     return response;
   }
 
-  private async readEventsAsync  (
+  private async readEventsAsync(
     aggregateId: string,
     encryptionKey?: string
-  ): Promise<IEvent[]>  {
-    const command = new QueryCommand({
-      TableName: this.eventTableName,
-      KeyConditionExpression: "aggregateId = :aggregateId",
-      ExpressionAttributeValues: { ":aggregateId": aggregateId },
-      ConsistentRead: true,
-      ScanIndexForward: true,
-    });
-
+  ): Promise<IEvent[]> {
     const documentClient = DynamoDBDocumentClient.from(this.dynamoDBClient);
-    const response = await documentClient.send(command);
-    documentClient.destroy();
-    const { Items } = response;
+    const items: Record<string, any>[] = [];
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
 
-    if (Items) {
-      const events = Items?.map(
+    do {
+      const response: QueryCommandOutput = await documentClient.send(
+        new QueryCommand({
+          TableName: this.eventTableName,
+          KeyConditionExpression: "aggregateId = :aggregateId",
+          ExpressionAttributeValues: { ":aggregateId": aggregateId },
+          ConsistentRead: true,
+          ScanIndexForward: true,
+          ExclusiveStartKey: lastEvaluatedKey,
+        })
+      );
+      const { Items, LastEvaluatedKey } = response;
+      logger.debug("Retrieved Items.", items)
+      if (Items) items.push(...Items);
+      logger.debug("All Items.", items)
+      lastEvaluatedKey = LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    documentClient.destroy();
+
+    if (items.length > 0) {
+      const events = items.map(
         ({ eventType, timestamp, encryptedProps, data }: any) => {
           const decryptedData = this.changeProps(
             data,
@@ -179,5 +194,5 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const e: IEvent[] = [];
       return e;
     }
-  };
+  }
 }

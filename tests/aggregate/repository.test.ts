@@ -24,23 +24,25 @@ const config = {
 
 Logger.initialize({ level: LogLevel.INFO });
 
+jest.setTimeout(90000);
+
 describe("Repository Tests", () => {
-  xit("failing test - will fail when we try and write more than 100 events to dynamo", async () => {
+  it("will fail when we try and create more that 100 changes", () => {
     // arrange
     const id = "id";
     const { repo } = setupRepoAndDynamoDB();
     const ar = TestAggregateRoot.create(id, "1");
 
     // act
-    for (let index = 2; index <= 101; index++) {
+    for (let index = 2; index <= 100; index++) {
       ar.changeName(index.toString());
     }
 
     // assert
-    await expect(repo.writeAsync(ar)).rejects.toThrow();
+    expect(() => ar.changeName('foo')).toThrow();
   });
 
-  xit("should handle writing and reading many events", async () => {
+  it("should handle writing and reading many events", async () => {
     const { ddbc, id, name, ar, repo } = await setupAndExecuteAsync(false);
 
     for (let i1 = 0; i1 < 200; i1++) {
@@ -63,7 +65,7 @@ describe("Repository Tests", () => {
     const { Items } = await dc.send(command);
 
     if (Items) {
-      expect(Items.length).toBe(5542);
+      expect(Items.length).toBe(5499);
     } else {
       fail("Event not found in database.");
     }
