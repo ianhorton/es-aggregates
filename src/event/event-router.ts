@@ -1,19 +1,21 @@
 import { IEvent } from "./models/event";
 
+type eventFunction = (e: IEvent) => void
 export class EventRouter {
-  readonly _handlers: { [type: string]: (e: IEvent) => void };
+  private readonly _handlers: Map<string, eventFunction>
+
 
   constructor() {
-    this._handlers = {};
+    this._handlers = new Map<string, eventFunction>
   }
 
-  public configureRoute(type: string, handler: (e: IEvent) => void): void {
+  public configureRoute(type: string, handler: eventFunction): void {
     // null checks
-    this._handlers[type] = handler;
+    this._handlers.set(type, handler)
   }
 
   public route(e: IEvent): void {
-    const handler = this._handlers[e.eventType];
+    const handler = this._handlers.get(e.eventType)
     if (handler) {
       handler(e);
     } else {
