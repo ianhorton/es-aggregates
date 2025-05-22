@@ -1,5 +1,5 @@
 export interface IEvent {
-  readonly encryptedProps?: string[];
+  readonly encryptedProps?: Array<string>;
   readonly eventType: string;
   readonly timestamp: string;
 }
