@@ -9,11 +9,12 @@ export class EventRouter {
   }
 
   public configureRoute(type: string, handler: eventFunction): void {
-    // null checks
+    // TODO: null checks
     this._handlers.set(type, handler);
   }
 
   public route(e: IEvent): void {
+    // TODO: null checks
     const handler = this._handlers.get(e.eventType);
     if (handler) {
       handler(e);
