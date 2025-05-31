@@ -1,22 +1,21 @@
-import { IEvent } from './models/event';
+import { IEvent } from "./models/event";
 
+type eventFunction = (e: IEvent) => void;
 export class EventRouter {
-  readonly _handlers: { [type: string]: (e: IEvent) => void };
+  private readonly _handlers: Map<string, eventFunction>;
 
   constructor() {
-    this._handlers = {};
+    this._handlers = new Map<string, eventFunction>();
   }
 
-  public configureRoute = (
-    type: string,
-    handler: (e: IEvent) => void
-  ): void => {
-    // null checks
-    this._handlers[type] = handler;
-  };
+  public configureRoute(type: string, handler: eventFunction): void {
+    // TODO: null checks
+    this._handlers.set(type, handler);
+  }
 
-  public route = (e: IEvent): void => {
-    const handler = this._handlers[e.eventType];
+  public route(e: IEvent): void {
+    // TODO: null checks
+    const handler = this._handlers.get(e.eventType);
     if (handler) {
       handler(e);
     } else {
@@ -24,5 +23,5 @@ export class EventRouter {
         `Handler not found for Event "${e.eventType}", did you forget to register it?`
       );
     }
-  };
+  }
 }

@@ -1,15 +1,23 @@
 import {
-    DynamoDBClient, Put, TransactWriteItem, TransactWriteItemsCommand, TransactWriteItemsInput,
-    TransactWriteItemsOutput
-} from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { marshall } from '@aws-sdk/util-dynamodb';
-import { Logger } from '@sailplane/logger';
+  DynamoDBClient,
+  Put,
+  TransactWriteItem,
+  TransactWriteItemsCommand,
+  TransactWriteItemsInput,
+  TransactWriteItemsOutput,
+} from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  QueryCommand,
+  QueryCommandOutput,
+} from "@aws-sdk/lib-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
+import { Logger, LogLevel } from "@sailplane/logger";
 
-import { IEvent } from '../event/models/event';
-import { IPersistedEvent } from '../event/models/persisted-event';
-import { AggregateRoot } from './aggregate-root';
-import { decrypt, encrypt } from './encryption';
+import { IEvent } from "../event/models/event";
+import { IPersistedEvent } from "../event/models/persisted-event";
+import { AggregateRoot } from "./aggregate-root";
+import { decrypt, encrypt } from "./encryption";
 
 const logger = new Logger("repository");
 
@@ -24,15 +32,18 @@ export interface IRepository<T extends AggregateRoot> {
 
 export class Repository<T extends AggregateRoot> implements IRepository<T> {
   constructor(
-    private eventTableName: string,
-    private activator: () => T,
-    private dynamoDBClient: DynamoDBClient
-  ) {}
+    private readonly eventTableName: string,
+    private readonly activator: () => T,
+    private readonly dynamoDBClient: DynamoDBClient,
+    readonly debug: boolean = false
+  ) {
+    logger.level = debug ? LogLevel.DEBUG : LogLevel.NONE;
+  }
 
-  public readAsync = async (
+  public async readAsync(
     id: string,
     encryptionKey?: string
-  ): Promise<T | undefined> => {
+  ): Promise<T | undefined> {
     const events = await this.readEventsAsync(id, encryptionKey);
 
     if (events.length > 0) {
@@ -42,12 +53,9 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     }
 
     return undefined;
-  };
+  }
 
-  public writeAsync = async (
-    aggregate: T,
-    encryptionKey?: string
-  ): Promise<void> => {
+  public async writeAsync(aggregate: T, encryptionKey?: string): Promise<void> {
     const changes = aggregate.getChanges();
     logger.debug("Changes.", changes);
 
@@ -63,14 +71,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     logger.debug("Transact Write Items Output.", output);
 
     aggregate.clearChanges();
-  };
+  }
 
-  private changeProps = (
+  private changeProps(
     props: any,
     f: (data: string, key: string) => string,
     encryptionKey?: string,
     encryptedProps?: string[]
-  ): {} => {
+  ): {} {
     if (encryptionKey === undefined) return props;
     if (encryptedProps === undefined) return props;
 
@@ -79,14 +87,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       props[propertyName] = f(props[propertyName], encryptionKey);
     }
     return props;
-  };
+  }
 
-  private transactWriteAsync = async (
+  private async transactWriteAsync(
     aggregateId: string,
     changes: IEvent[],
     expectedVersion: number,
     encryptionKey?: string
-  ): Promise<TransactWriteItemsOutput> => {
+  ): Promise<TransactWriteItemsOutput> {
     const transactWriteItemList: TransactWriteItem[] = [];
 
     for (let index = 0; index < changes.length; index++) {
@@ -131,27 +139,38 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     const response = await documentClient.send(command);
 
     return response;
-  };
+  }
 
-  private readEventsAsync = async (
+  private async readEventsAsync(
     aggregateId: string,
     encryptionKey?: string
-  ): Promise<IEvent[]> => {
-    const command = new QueryCommand({
-      TableName: this.eventTableName,
-      KeyConditionExpression: "aggregateId = :aggregateId",
-      ExpressionAttributeValues: { ":aggregateId": aggregateId },
-      ConsistentRead: true,
-      ScanIndexForward: true,
-    });
-
+  ): Promise<IEvent[]> {
     const documentClient = DynamoDBDocumentClient.from(this.dynamoDBClient);
-    const response = await documentClient.send(command);
-    documentClient.destroy();
-    const { Items } = response;
+    const items: Record<string, any>[] = [];
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
 
-    if (Items) {
-      const events = Items?.map(
+    do {
+      const response: QueryCommandOutput = await documentClient.send(
+        new QueryCommand({
+          TableName: this.eventTableName,
+          KeyConditionExpression: "aggregateId = :aggregateId",
+          ExpressionAttributeValues: { ":aggregateId": aggregateId },
+          ConsistentRead: true,
+          ScanIndexForward: true,
+          ExclusiveStartKey: lastEvaluatedKey,
+        })
+      );
+      const { Items, LastEvaluatedKey } = response;
+      logger.debug("Retrieved Items.", items)
+      if (Items) items.push(...Items);
+      logger.debug("All Items.", items)
+      lastEvaluatedKey = LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    documentClient.destroy();
+
+    if (items.length > 0) {
+      const events = items.map(
         ({ eventType, timestamp, encryptedProps, data }: any) => {
           const decryptedData = this.changeProps(
             data,
@@ -175,5 +194,5 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const e: IEvent[] = [];
       return e;
     }
-  };
+  }
 }

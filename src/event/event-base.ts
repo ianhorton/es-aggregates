@@ -9,6 +9,6 @@ export abstract class EventBase implements IEvent {
   ).toISOString();
   constructor(
     public readonly eventType: string,
-    public readonly encryptedProps?: string[]
+    public readonly encryptedProps?: Array<string>
   ) {}
 }
