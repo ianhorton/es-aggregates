@@ -1,6 +1,6 @@
 {
   "name": "es-aggregates",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "main": "dist/index.js",
   "license": "MIT",
   "scripts": {
@@ -9,7 +9,7 @@
     "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "preversion": "yarn test",
-    "postversion": "git push --tags && yarn publish . --tag $npm_package_version && git push && echo \"Successfully released version $npm_package_version!\""
+    "postversion": "git push --tags && yarn publish . --tag latest && git push && echo \"Successfully released version $npm_package_version!\""
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.485.0",
