@@ -83,7 +83,6 @@ class User extends AggregateRoot {
   // Domain method to change user's name
   public changeName(newName: string) {
     const nameChangedEvent = new UserNameChanged(this.id, newName);
-    this._name = newName;
     this.applyChange(nameChangedEvent);
   }
 }
