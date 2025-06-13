@@ -24,6 +24,28 @@ npm install es-aggregates
 yarn add es-aggregates
 ```
 
+## Setup
+
+### DynamoDB Table
+
+The library requires a DynamoDB table with the following schema:
+
+```typescript
+{
+  TableName: "your-events-table-name",
+  KeySchema: [
+    { AttributeName: "aggregateId", KeyType: "HASH" },
+    { AttributeName: "aggregateVersion", KeyType: "RANGE" }
+  ],
+  AttributeDefinitions: [
+    { AttributeName: "aggregateId", AttributeType: "S" },
+    { AttributeName: "aggregateVersion", AttributeType: "N" }
+  ]
+}
+```
+
+You can create this table using the AWS Console, AWS CLI, or Infrastructure as Code tools like CloudFormation or Terraform.
+
 ## Usage
 
 ```typescript
