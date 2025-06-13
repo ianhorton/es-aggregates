@@ -27,7 +27,8 @@ yarn add es-aggregates
 ## Usage
 
 ```typescript
-import { AggregateRoot, EventBase } from 'es-aggregates';
+import { AggregateRoot, EventBase, Repository } from 'es-aggregates';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { v4 } from 'uuid';
 
 // Define your events
@@ -87,17 +88,67 @@ class User extends AggregateRoot {
   }
 }
 
+// Set up DynamoDB client
+const dynamoClient = new DynamoDBClient({
+  region: 'your-region',
+  // Add your AWS credentials or use environment variables
+});
+
+// Create repository
+const userRepository = new Repository<User>(
+  'your-events-table-name',
+  User.create, // Factory function
+  dynamoClient
+);
+
 // Usage example
-const userId = v4();
-const user = User.create(userId, "John Doe");
-console.log(user.name); // "John Doe"
+async function example() {
+  // Create a new user
+  const userId = v4();
+  const user = User.create(userId, "John Doe");
+  
+  // Save the user to DynamoDB
+  await userRepository.writeAsync(user);
+  
+  // Read the user back
+  const savedUser = await userRepository.readAsync(userId);
+  console.log(savedUser?.name); // "John Doe"
+  
+  // Make changes
+  savedUser?.changeName("Jane Doe");
+  
+  // Save changes
+  await userRepository.writeAsync(savedUser!);
+  
+  // Read again to verify changes
+  const updatedUser = await userRepository.readAsync(userId);
+  console.log(updatedUser?.name); // "Jane Doe"
+}
 
-user.changeName("Jane Doe");
-console.log(user.name); // "Jane Doe"
-
-// Get all pending changes
-const changes = user.getChanges();
-console.log(changes.length); // 2 (UserCreated and UserNameChanged events)
+// Handle concurrent modifications
+async function handleConcurrentModifications() {
+  const userId = v4();
+  const user1 = User.create(userId, "John");
+  await userRepository.writeAsync(user1);
+  
+  // Simulate concurrent access
+  const user2 = await userRepository.readAsync(userId);
+  const user3 = await userRepository.readAsync(userId);
+  
+  // Make changes to both instances
+  user2?.changeName("Jane");
+  user3?.changeName("Bob");
+  
+  // First save succeeds
+  await userRepository.writeAsync(user2!);
+  
+  // Second save fails due to version mismatch
+  try {
+    await userRepository.writeAsync(user3!);
+  } catch (error) {
+    console.log("Concurrent modification detected!");
+  }
+}
 ```
 
 ## Development
