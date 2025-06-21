@@ -2,8 +2,10 @@
   "name": "es-aggregates",
   "version": "0.3.12",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "license": "MIT",
   "scripts": {
+    "prepare": "yarn build",
     "build": "run-s clean build:tsc",
     "build:tsc": "tsc -b",
     "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
@@ -11,6 +13,17 @@
     "preversion": "yarn test",
     "postversion": "git push --tags && yarn publish . --tag latest && git push && echo \"Successfully released version $npm_package_version!\""
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ianhorton/es-aggregates.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ianhorton/es-aggregates/issues"
+  },
+  "homepage": "https://github.com/ianhorton/es-aggregates#readme",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.485.0",
     "@aws-sdk/lib-dynamodb": "^3.485.0",
