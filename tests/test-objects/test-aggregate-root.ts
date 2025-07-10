@@ -1,6 +1,6 @@
 import { AggregateRoot } from "../../src";
 import { v4 } from "uuid";
-import { TestEntity } from "./test-entity";
+import { DummyEntityCreated, TestEntity } from "./test-entity"
 import { TestEntityCreated } from "./events/test-entity-created";
 import { TestAggregateRootNameChanged } from "./events/test-aggregate-root-name-changed";
 import { TestAggregateRootCreated } from "./events/test-aggregate-root-created";
@@ -60,6 +60,12 @@ export class TestAggregateRoot extends AggregateRoot {
         if (te) {
           te.route(e);
         }
+      }
+    );
+
+    this.register(
+      DummyEntityCreated.typename,
+      (e: DummyEntityCreated) => {
       }
     );
   }

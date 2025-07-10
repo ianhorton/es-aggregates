@@ -62,4 +62,17 @@ describe("Entity Tests", () => {
     // assert
     expect(ar.testEntities[0].name).toBe("new name");
   });
+
+  it("should preserve the context of the entity when it is routed to", () => {
+    const id = v4();
+    const name = "New AR";
+
+    // act
+    const ar = TestAggregateRoot.create(id, name);
+    const entityId = ar.createTestEntity("child");
+    const entity = ar.testEntities.find((x) => x.id === entityId);
+
+    entity?.testContext()
+
+  })
 });
