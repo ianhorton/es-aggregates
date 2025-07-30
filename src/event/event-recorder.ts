@@ -20,7 +20,7 @@ export class EventRecorder {
   }
 
   public record(event: IEvent): void {
-    // this is a bit sukky because this limit actually comes from dynamo, so it is funky to be managing that here
+    // this is a bit sucky because this limit actually comes from dynamo, so it is funky to be managing that here
     // not really a massive issue until we decide to support other persistence mechanisms...
     if (this._recorded.length === 100) {
       throw new Error(
