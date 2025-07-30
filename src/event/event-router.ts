@@ -8,12 +8,12 @@ export class EventRouter {
     this._handlers = new Map<string, eventFunction>();
   }
 
-  public configureRoute(type: string, handler: eventFunction): void {
+  public configureRoute = (type: string, handler: eventFunction): void => {
     // TODO: null checks
     this._handlers.set(type, handler);
-  }
+  };
 
-  public route(e: IEvent): void {
+  public route = (e: IEvent): void => {
     // TODO: null checks
     const handler = this._handlers.get(e.eventType);
     if (handler) {
@@ -23,5 +23,5 @@ export class EventRouter {
         `Handler not found for Event "${e.eventType}", did you forget to register it?`
       );
     }
-  }
+  };
 }
