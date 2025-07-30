@@ -7,19 +7,19 @@ export class EventRecorder {
     this._recorded = [];
   }
 
-  public hasChanges(): boolean {
+  public hasChanges = (): boolean => {
     return this._recorded.length > 0;
-  }
+  };
 
-  public getChanges(): Array<IEvent> {
+  public getChanges = (): Array<IEvent> => {
     return this._recorded;
-  }
+  };
 
-  public getChangeCount(): number {
+  public getChangeCount = (): number => {
     return this._recorded.length;
-  }
+  };
 
-  public record(event: IEvent): void {
+  public record = (event: IEvent): void => {
     // this is a bit sucky because this limit actually comes from dynamo, so it is funky to be managing that here
     // not really a massive issue until we decide to support other persistence mechanisms...
     if (this._recorded.length === 100) {
@@ -28,9 +28,9 @@ export class EventRecorder {
       );
     }
     this._recorded.push(event);
-  }
+  };
 
-  public reset(): void {
+  public reset = (): void => {
     this._recorded.length = 0;
-  }
+  };
 }

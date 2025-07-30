@@ -10,15 +10,15 @@ export abstract class Entity {
     this._router = new EventRouter();
   }
 
-  protected register(type: string, handler: (e: any) => void) {
+  protected register = (type: string, handler: (e: any) => void) => {
     this._router.configureRoute(type, handler);
-  }
+  };
 
-  public route(e: IEvent) {
+  public route = (e: IEvent) => {
     this._router.route(e);
-  }
+  };
 
-  public apply(e: IEvent) {
+  public apply = (e: IEvent) => {
     this._applier(e);
-  }
+  };
 }
