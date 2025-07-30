@@ -56,7 +56,7 @@ describe("AggregateRoot Tests", () => {
     expect(changes).toHaveLength(0);
   });
 
-  it("should update proerty value when new event is raised", () => {
+  it("should update property value when new event is raised", () => {
     // arrange
     const id = v4();
     const name = "New AR";

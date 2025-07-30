@@ -103,7 +103,7 @@ describe("Repository Tests", () => {
       expect(Item.aggregateVersion).toBe(0);
       expect(Item.data.name).toBe(name);
     } else {
-      fail("Event not found in dateabase.");
+      fail("Event not found in database.");
     }
   });
 
@@ -170,7 +170,7 @@ describe("Repository Tests", () => {
   // we use the 'expected version' value of the ar to ensure that if there is a version of a an with stale changes in memory
   // somewhere, we cannot over write the current changes with the stale ones.
   it("should fail if the expected version does not match that of the AggregateRoot we are saving", async () => {
-    // arrane
+    // arrange
     const { id, repo } = await setupAndExecuteAsync(false);
 
     // act
