@@ -59,6 +59,11 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     const changes = aggregate.getChanges();
     logger.debug("Changes.", changes);
 
+    if (changes.length === 0) {
+      logger.debug("No changes to write for aggregate.", aggregate.id);
+      return;
+    }
+
     const expectedVersion = aggregate.getExpectedVersion();
     logger.debug("Expected Version.", expectedVersion);
 

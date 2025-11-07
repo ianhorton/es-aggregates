@@ -191,6 +191,26 @@ describe("Repository Tests", () => {
       await expect(repo.writeAsync(ar2)).rejects.toThrow();
     }
   });
+
+  it("should handle writeAsync with no changes without throwing", async () => {
+    // arrange
+    const { id, repo } = await setupAndExecuteAsync(false);
+
+    // act
+    // read back the aggregate
+    const ar = await repo.readAsync(id);
+
+    // assert
+    // writing without making changes should not throw
+    if (ar) {
+      await expect(repo.writeAsync(ar)).resolves.not.toThrow();
+
+      // verify the aggregate still has no uncommitted changes
+      expect(ar.getChanges()).toHaveLength(0);
+    } else {
+      fail("AggregateRoot not found in database.");
+    }
+  });
 });
 
 // helper methods
