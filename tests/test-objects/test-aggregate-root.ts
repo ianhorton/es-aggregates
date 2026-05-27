@@ -5,6 +5,7 @@ import { TestEntityCreated } from "./events/test-entity-created";
 import { TestAggregateRootNameChanged } from "./events/test-aggregate-root-name-changed";
 import { TestAggregateRootCreated } from "./events/test-aggregate-root-created";
 import { TestEntityNameChanged } from "./events/test-entity-name-changed";
+import { TestMessageCreated } from "./events/test-message-created";
 
 export class TestAggregateRoot extends AggregateRoot {
   private _id: string;
@@ -25,6 +26,16 @@ export class TestAggregateRoot extends AggregateRoot {
   private _created: string;
   public get created(): string {
     return this._created;
+  }
+
+  private _messageText?: string;
+  public get messageText(): string | undefined {
+    return this._messageText;
+  }
+
+  private _messageImageUrl?: string;
+  public get messageImageUrl(): string | undefined {
+    return this._messageImageUrl;
   }
 
   constructor() {
@@ -68,6 +79,11 @@ export class TestAggregateRoot extends AggregateRoot {
       (e: DummyEntityCreated) => {
       }
     );
+
+    this.register(TestMessageCreated.typename, (e: TestMessageCreated) => {
+      this._messageText = e.text;
+      this._messageImageUrl = e.imageUrl;
+    });
   }
 
   public static factory = (): TestAggregateRoot => {
@@ -110,6 +126,10 @@ export class TestAggregateRoot extends AggregateRoot {
     }
 
     return id;
+  };
+
+  public createMessage = (text?: string, imageUrl?: string) => {
+    this.applyChange(new TestMessageCreated(this.id, text, imageUrl));
   };
 
   public changeNameTestEntity = (id: string, name: string) => {

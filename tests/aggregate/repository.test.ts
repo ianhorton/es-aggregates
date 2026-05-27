@@ -192,6 +192,68 @@ describe("Repository Tests", () => {
     }
   });
 
+  it("should not throw when encrypting an event with an absent allow-listed field", async () => {
+    // arrange
+    // TestMessageCreated allow-lists both text and imageUrl, but a text-only
+    // message leaves imageUrl undefined. encrypt(undefined, key) must not run.
+    const id = v4();
+    const key = "key";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    ar.createMessage("hello world");
+
+    // act / assert
+    await expect(repo.writeAsync(ar, key)).resolves.not.toThrow();
+  });
+
+  it("should not throw when an allow-listed field is null", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    // image-only message: text is explicitly null
+    ar.createMessage(null as unknown as undefined, "https://example.com/i.png");
+
+    // act / assert
+    await expect(repo.writeAsync(ar, key)).resolves.not.toThrow();
+  });
+
+  it("should round-trip an event with one populated and one absent allow-listed field", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const text = "secret message text";
+    const { ddbc, repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    ar.createMessage(text); // imageUrl absent
+
+    // act
+    await repo.writeAsync(ar, key);
+
+    // the populated allow-listed field is encrypted at rest
+    const dc = DynamoDBDocumentClient.from(ddbc);
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 1 },
+      })
+    );
+    expect(Item?.data.text).not.toBe(text);
+    expect(Item?.data.imageUrl).toBeUndefined();
+
+    // read back: present field decrypts, absent stays absent
+    const readAr = await repo.readAsync(id, key);
+
+    // assert
+    if (readAr) {
+      expect(readAr.messageText).toBe(text);
+      expect(readAr.messageImageUrl).toBeUndefined();
+    } else {
+      fail("AggregateRoot not found in database.");
+    }
+  });
+
   it("should handle writeAsync with no changes without throwing", async () => {
     // arrange
     const { id, repo } = await setupAndExecuteAsync(false);
