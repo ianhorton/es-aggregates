@@ -89,7 +89,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
 
     for (let index = 0; index < encryptedProps.length; index++) {
       const propertyName = encryptedProps[index];
-      props[propertyName] = f(props[propertyName], encryptionKey);
+      const value = props[propertyName];
+      // An allow-listed field may be absent on a given event (e.g.
+      // MessageCreated lists both text and imageUrl but populates only one).
+      // Skip absent fields so encrypt/decrypt is never called with undefined,
+      // and keep absent as absent (do NOT coerce to "").
+      if (value !== undefined && value !== null) {
+        props[propertyName] = f(value, encryptionKey);
+      }
     }
     return props;
   };
