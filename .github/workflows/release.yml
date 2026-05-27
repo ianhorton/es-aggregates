@@ -1,5 +1,9 @@
 name: Release
 
+# Evaluated at queue time, so it can only show the bump TYPE + actor — the
+# resolved version number is computed in-job and surfaced via the run summary.
+run-name: "Release (${{ github.event.inputs.version }}) by @${{ github.actor }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -118,3 +122,7 @@ jobs:
       # Authenticates via OIDC Trusted Publishing (no NPM_TOKEN). Requires the
       # one-time Trusted Publisher config on npmjs.com — see PR description.
       run: npm publish --access public --provenance
+
+    - name: Release summary
+      # Surfaces the resolved version on the run page (run-name can't show it).
+      run: echo "### Released \`${{ steps.version.outputs.tag_name }}\` (${{ steps.version.outputs.current_version }} → ${{ steps.version.outputs.new_version }})" >> "$GITHUB_STEP_SUMMARY"
