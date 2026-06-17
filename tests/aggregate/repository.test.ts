@@ -130,6 +130,57 @@ describe("Repository Tests", () => {
     }
   });
 
+  it("should stamp encryptedProps only for fields actually encrypted (with key)", async () => {
+    // arrange
+    const { ddbc, id } = await setupAndExecuteAsync(true);
+    const dc = DynamoDBDocumentClient.from(ddbc);
+
+    // act
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 0 },
+      })
+    );
+
+    // assert
+    // TestAggregateRootCreated allow-lists ["name"] and name is populated, so
+    // the marker reflects exactly the field that was encrypted at rest.
+    if (Item) {
+      expect(Item.encryptedProps).toEqual(["name"]);
+    } else {
+      fail("Event not found in database.");
+    }
+  });
+
+  it("should NOT stamp encryptedProps when written without a key (plaintext)", async () => {
+    // arrange
+    // qp-389/qp-qdwt regression: the write path used to stamp the static
+    // encryptedProps allow-list onto EVERY event, even when no key was supplied
+    // and the data stayed plaintext. That false marker is a data-corruption
+    // landmine — once encryption is later enabled the read path would run
+    // decrypt() on plaintext — and it made marker-trusting backfills skip the
+    // plaintext as "already encrypted". A plaintext event must carry no marker.
+    const { ddbc, id, name } = await setupAndExecuteAsync(false);
+    const dc = DynamoDBDocumentClient.from(ddbc);
+
+    // act
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 0 },
+      })
+    );
+
+    // assert
+    if (Item) {
+      expect(Item.encryptedProps).toBeUndefined();
+      expect(Item.data.name).toBe(name); // data is genuinely plaintext
+    } else {
+      fail("Event not found in database.");
+    }
+  });
+
   it("should return and AggregateRoot with unencrypted properties", async () => {
     // arrange
     const { repo, id, key, name } = await setupAndExecuteAsync(true);

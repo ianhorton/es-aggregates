@@ -113,12 +113,35 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const event = changes[index];
       const { eventType, timestamp, encryptedProps, ...otherProps } = event;
 
+      // Only stamp the encryptedProps marker for fields we ACTUALLY encrypt.
+      // With no key (encryption off) changeProps leaves the data plaintext, so
+      // persisting the marker would falsely claim the fields are ciphertext —
+      // which corrupts the read path (it would run decrypt() on plaintext when
+      // rehydrating) and defeats any marker-trusting backfill (it would skip
+      // plaintext as "already encrypted"). Plaintext events therefore carry no
+      // marker at all. We also drop fields that are absent on this event (an
+      // allow-listed field may be unpopulated, e.g. a MessageCreated with text
+      // but no imageUrl) so the marker reflects exactly what was encrypted —
+      // mirroring changeProps, which skips absent values.
+      const otherPropsRecord = otherProps as Record<string, unknown>;
+      const persistedEncryptedProps =
+        encryptionKey === undefined || encryptedProps === undefined
+          ? undefined
+          : encryptedProps.filter(
+              (name) =>
+                otherPropsRecord[name] !== undefined &&
+                otherPropsRecord[name] !== null
+            );
+
       const persistedEvent: IPersistedEvent = {
         aggregateId,
         eventType,
         timestamp,
         aggregateVersion: expectedVersion + index,
-        encryptedProps,
+        encryptedProps:
+          persistedEncryptedProps && persistedEncryptedProps.length > 0
+            ? persistedEncryptedProps
+            : undefined,
         data: this.changeProps(
           otherProps,
           encrypt,
