@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [ main ]
     types: [opened, synchronize, reopened]
+  # Allows the Release workflow to dispatch this check on a bump branch so the
+  # bot-opened auto-merge PR gets its required `validate` status. See release.yml.
+  workflow_dispatch:
 
 jobs:
   validate:
