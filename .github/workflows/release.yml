@@ -17,8 +17,11 @@ name: Release
 #      short-lived release branch, create the GitHub Release, and open an
 #      AUTO-MERGING PR for the package.json bump.
 #   3. `npm publish` via OIDC Trusted Publishing (no NPM_TOKEN) runs LAST — the
-#      most failure-prone step. If it fails, nothing is orphaned (the tag/Release
-#      /PR already exist) and a re-run re-publishes the SAME version (recovery).
+#      most failure-prone step. The pre-publish reconcile is idempotent: it
+#      checks the tag, branch, GitHub Release and reconcile PR independently and
+#      (re)creates only what is missing, so ANY partial-failure re-run converges
+#      to the full end state (tag + branch + Release + merged PR + published) and
+#      an already-complete state is a clean no-op.
 #   4. The reconcile PR is auto-merged (0 required approvals → merges itself once
 #      the 3 required checks pass), using --merge (NOT squash) so the tagged
 #      commit stays reachable from main. A PR opened with the default
@@ -125,13 +128,14 @@ jobs:
         fi
 
         # Recovery: tag already on the remote but the version is not on npm =>
-        # a previous run created the immutable refs (tag/branch/Release/PR) but
-        # failed at (or before) publish. Re-publish the existing tagged commit
-        # instead of recreating refs.
+        # a previous run created some refs but didn't finish. This flag only
+        # decides how to set up the working tree (check out the existing tagged
+        # commit vs. build a fresh release commit); the reconcile step below is
+        # idempotent and (re)creates whatever artifacts are actually missing.
         RECOVERY=false
         if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
           RECOVERY=true
-          echo "Tag $TAG exists but $NEW_VERSION is not on npm — recovery re-publish of the existing tag."
+          echo "Tag $TAG exists but $NEW_VERSION is not on npm — recovery run; will reconcile missing artifacts."
         fi
 
         {
@@ -176,8 +180,7 @@ jobs:
     - name: Run tests
       run: yarn test
 
-    - name: Push refs, create Release, open auto-merge PR (never pushes main)
-      if: steps.version.outputs.recovery == 'false'
+    - name: Reconcile release artifacts (idempotent) before publish
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -186,37 +189,75 @@ jobs:
         BRANCH="${{ steps.version.outputs.branch }}"
         VER="${{ steps.version.outputs.new_version }}"
 
-        # Push the immutable refs first. refs/tags/* is not covered by main's
-        # branch protection or the protect-default ruleset, and the release
-        # branch is not protected.
-        git push origin "$TAG"
-        git push origin "$BRANCH"
+        # Each artifact is checked independently and (re)created only if missing,
+        # so any partial-failure re-run converges to the full end state and an
+        # already-complete state is a clean no-op. HEAD is the release commit
+        # (fresh commit on a normal run, or the checked-out tag on recovery).
 
-        gh release create "$TAG" \
-          --title "Release $TAG" \
-          --notes "Automated release. ${{ steps.version.outputs.base_version }} -> $VER. Published to npm via OIDC." \
-          ${{ contains(steps.version.outputs.new_version, '-') && '--prerelease' || '' }}
+        # 1. Tag (immutable). refs/tags/* is outside main's branch protection
+        #    and the protect-default ruleset.
+        if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already on remote."
+        else
+          git push origin "refs/tags/$TAG"
+          echo "Pushed tag $TAG."
+        fi
 
-        PR_URL=$(gh pr create \
-          --base main \
-          --head "$BRANCH" \
-          --title "chore: bump version to $VER" \
-          --body "Reconciles \`main\`'s \`package.json\` with release **$VER** (tagged \`$TAG\`). Opened automatically by the Release workflow; no commit is pushed directly to \`main\`. Merged (not squashed) so the tagged commit stays reachable from \`main\`. Auto-merges once the required checks pass.")
-        echo "Opened $PR_URL"
+        # 2. GitHub Release.
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          echo "GitHub Release $TAG already exists."
+        else
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "Automated release. ${{ steps.version.outputs.base_version }} -> $VER. Published to npm via OIDC." \
+            ${{ contains(steps.version.outputs.new_version, '-') && '--prerelease' || '' }}
+          echo "Created GitHub Release $TAG."
+        fi
 
-        # A PR opened with GITHUB_TOKEN does NOT auto-trigger pull_request checks
-        # (no-recursion rule). Dispatch the required checks explicitly on the
-        # branch — workflow_dispatch IS allowed for GITHUB_TOKEN — so they run as
-        # real CI and report the required contexts on the PR head SHA.
-        gh workflow run ci.yml --ref "$BRANCH"
-        gh workflow run pr-validation.yml --ref "$BRANCH"
+        # 3. Reconcile main's package.json. Check the END STATE (is main already
+        #    at $VER?) rather than inferring from refs — if a prior run's PR
+        #    already merged, main is reconciled and we must NOT resurrect the
+        #    deleted branch or open a duplicate PR.
+        git fetch origin main >/dev/null 2>&1 || true
+        git show origin/main:package.json > "$RUNNER_TEMP/main-package.json"
+        MAIN_VER=$(node -p "require('$RUNNER_TEMP/main-package.json').version")
+        if [ "$MAIN_VER" = "$VER" ]; then
+          echo "main's package.json already at $VER — reconciled, nothing to do."
+        else
+          # Reconcile branch (vehicle for the PR) — push HEAD if it's missing.
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git push origin "HEAD:refs/heads/$BRANCH"
+            echo "Pushed reconcile branch $BRANCH."
+          fi
 
-        # --merge, NOT --squash: a squash makes a NEW commit on main, leaving
-        # the tagged release-branch commit off mainline (git describe / bisect /
-        # npm provenance auditing would find the tag off-history). A merge keeps
-        # the tagged commit an ancestor of main. --delete-branch tidies up.
-        gh pr merge "$PR_URL" --auto --merge --delete-branch
-        echo "Auto-merge (merge commit) armed for $PR_URL"
+          # Reuse an existing OPEN PR for this branch, else open one.
+          PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore: bump version to $VER" \
+              --body "Reconciles \`main\`'s \`package.json\` with release **$VER** (tagged \`$TAG\`). Opened automatically by the Release workflow; no commit is pushed directly to \`main\`. Merged (not squashed) so the tagged commit stays reachable from \`main\`. Auto-merges once the required checks pass.")
+            echo "Opened reconcile PR $PR_URL."
+          else
+            echo "Reusing open reconcile PR $PR_URL."
+          fi
+
+          # A PR opened with GITHUB_TOKEN does NOT auto-trigger pull_request
+          # checks (no-recursion rule). Dispatch the required checks explicitly
+          # on the branch — workflow_dispatch IS allowed for GITHUB_TOKEN — so
+          # they run as real CI and report the required contexts on the PR head.
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run pr-validation.yml --ref "$BRANCH"
+
+          # --merge, NOT --squash: a squash makes a NEW commit on main, leaving
+          # the tagged commit off mainline (git describe / bisect / npm
+          # provenance would find the tag off-history). A merge keeps the tagged
+          # commit an ancestor of main. --delete-branch tidies up. Idempotent if
+          # auto-merge is already armed.
+          gh pr merge "$PR_URL" --auto --merge --delete-branch
+          echo "Auto-merge (merge commit) armed for $PR_URL."
+        fi
 
     - name: Publish to npm
       # LAST failure-prone step. OIDC Trusted Publishing (no NPM_TOKEN); the
