@@ -17,18 +17,35 @@ This repository uses GitHub Actions for automated releases following semantic ve
 
 ### What Happens During Release
 
-1. **Tests Run**: All tests must pass
-2. **Build**: Project is built and verified
-3. **Version Bump**: package.json version is updated according to semver
-4. **Git Tag**: A new git tag is created (e.g., v0.3.14)
-5. **GitHub Release**: A GitHub release is created with changelog
-6. **NPM Publish**: Package is published to npm registry
+The flow makes **zero direct pushes to `main`** (which is branch-protected with
+`enforce_admins=true`):
+
+1. **Determine version**: the next version is derived from npm's published latest
+   (the higher of npm latest and `package.json`), then bumped by the chosen type.
+   This avoids republishing an existing version when `main`'s `package.json` lags npm.
+   The run is refused only if that version is already published to npm.
+2. **Build & Test**: project is built and the full suite must pass.
+3. **Establish immutable refs first**: push only the tag `vX.Y.Z` (tags are not
+   covered by the branch protection / ruleset on `main`) plus a short-lived
+   `release/vX.Y.Z` branch, create the **GitHub Release**, and open the reconcile
+   **auto-merging PR** for the `package.json` bump.
+4. **Reconcile `main`**: the PR updates `main`'s `package.json` to the published
+   version (0 approvals → merges once the required checks pass). The release job
+   dispatches `ci.yml` / `pr-validation.yml` on the branch so the bot-opened PR
+   gets its required checks. It is **merged, not squashed**, so the tagged commit
+   stays reachable from `main` (`git describe` / bisect / provenance). `main` is
+   never pushed to directly.
+5. **NPM Publish (last)**: package is published to npm via **OIDC Trusted
+   Publishing** (no `NPM_TOKEN`), with provenance. Publish is the final,
+   most failure-prone step: if it fails, the tag/Release/PR already exist and a
+   re-run re-publishes the same version (it checks out the existing tag).
 
 ### Prerequisites
 
-Before using the release workflow, ensure these secrets are configured in GitHub:
-
-- `NPM_TOKEN`: Your npm authentication token for publishing
+- **OIDC Trusted Publishing** must be configured for this package on npmjs.com
+  (one-time). No `NPM_TOKEN` secret is required.
+- Repo setting **Allow auto-merge** must be enabled (Settings → General →
+  Pull Requests) so the reconcile PR can auto-merge.
 
 ### Versioning Strategy
 
