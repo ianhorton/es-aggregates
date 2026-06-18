@@ -78,15 +78,21 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     aggregate.clearChanges();
   };
 
+  // Applies f (encrypt/decrypt) to each allow-listed field that is actually
+  // present, and reports back exactly which fields it transformed. The caller
+  // derives the persisted encryptedProps marker from `transformed`, so the
+  // marker can never desync from what was really encrypted (single source of
+  // truth — the presence check lives here and nowhere else).
   private changeProps = (
     props: any,
     f: (data: string, key: string) => string,
     encryptionKey?: string,
     encryptedProps?: string[]
-  ): {} => {
-    if (encryptionKey === undefined) return props;
-    if (encryptedProps === undefined) return props;
+  ): { data: {}; transformed: string[] } => {
+    if (encryptionKey === undefined) return { data: props, transformed: [] };
+    if (encryptedProps === undefined) return { data: props, transformed: [] };
 
+    const transformed: string[] = [];
     for (let index = 0; index < encryptedProps.length; index++) {
       const propertyName = encryptedProps[index];
       const value = props[propertyName];
@@ -96,9 +102,10 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       // and keep absent as absent (do NOT coerce to "").
       if (value !== undefined && value !== null) {
         props[propertyName] = f(value, encryptionKey);
+        transformed.push(propertyName);
       }
     }
-    return props;
+    return { data: props, transformed };
   };
 
   private transactWriteAsync = async (
@@ -113,18 +120,29 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const event = changes[index];
       const { eventType, timestamp, encryptedProps, ...otherProps } = event;
 
+      // Stamp the encryptedProps marker from exactly what changeProps actually
+      // encrypted. With no key (encryption off) changeProps leaves the data
+      // plaintext and reports nothing transformed, so persisting a marker would
+      // falsely claim the fields are ciphertext — corrupting the read path (it
+      // would run decrypt() on plaintext when rehydrating) and defeating any
+      // marker-trusting backfill (it would skip plaintext as "already
+      // encrypted"). Plaintext events therefore carry no marker at all. Absent
+      // allow-listed fields (e.g. a MessageCreated with text but no imageUrl)
+      // are likewise excluded, because changeProps does not transform them.
+      const { data, transformed } = this.changeProps(
+        otherProps,
+        encrypt,
+        encryptionKey,
+        encryptedProps
+      );
+
       const persistedEvent: IPersistedEvent = {
         aggregateId,
         eventType,
         timestamp,
         aggregateVersion: expectedVersion + index,
-        encryptedProps,
-        data: this.changeProps(
-          otherProps,
-          encrypt,
-          encryptionKey,
-          encryptedProps
-        ),
+        encryptedProps: transformed.length > 0 ? transformed : undefined,
+        data,
       };
 
       const item = marshall(persistedEvent, { removeUndefinedValues: true });
@@ -184,7 +202,7 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     if (items.length > 0) {
       const events = items.map(
         ({ eventType, timestamp, encryptedProps, data }: any) => {
-          const decryptedData = this.changeProps(
+          const { data: decryptedData } = this.changeProps(
             data,
             decrypt,
             encryptionKey,
