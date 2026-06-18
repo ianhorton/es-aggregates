@@ -17,18 +17,30 @@ This repository uses GitHub Actions for automated releases following semantic ve
 
 ### What Happens During Release
 
-1. **Tests Run**: All tests must pass
-2. **Build**: Project is built and verified
-3. **Version Bump**: package.json version is updated according to semver
-4. **Git Tag**: A new git tag is created (e.g., v0.3.14)
-5. **GitHub Release**: A GitHub release is created with changelog
-6. **NPM Publish**: Package is published to npm registry
+The flow makes **zero direct pushes to `main`** (which is branch-protected with
+`enforce_admins=true`):
+
+1. **Determine version**: the next version is derived from npm's published latest
+   (the higher of npm latest and `package.json`), then bumped by the chosen type.
+   This avoids republishing an existing version when `main`'s `package.json` lags npm.
+2. **Build & Test**: project is built and the full suite must pass.
+3. **NPM Publish**: package is published to npm via **OIDC Trusted Publishing**
+   (no `NPM_TOKEN`), with provenance.
+4. **Git Tag**: only the tag `vX.Y.Z` is pushed (tags are not covered by the
+   branch protection / ruleset on `main`), along with a short-lived
+   `release/vX.Y.Z` branch.
+5. **GitHub Release**: a GitHub release is created for the tag.
+6. **Reconcile `main`**: an **auto-merging PR** updates `main`'s `package.json`
+   to the published version (0 approvals → merges once the required checks pass);
+   the release job dispatches `ci.yml` / `pr-validation.yml` on the branch so the
+   bot-opened PR gets its required checks. `main` is never pushed to directly.
 
 ### Prerequisites
 
-Before using the release workflow, ensure these secrets are configured in GitHub:
-
-- `NPM_TOKEN`: Your npm authentication token for publishing
+- **OIDC Trusted Publishing** must be configured for this package on npmjs.com
+  (one-time). No `NPM_TOKEN` secret is required.
+- Repo setting **Allow auto-merge** must be enabled (Settings → General →
+  Pull Requests) so the reconcile PR can auto-merge.
 
 ### Versioning Strategy
 
