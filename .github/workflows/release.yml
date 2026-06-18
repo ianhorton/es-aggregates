@@ -11,14 +11,18 @@ name: Release
 # This flow makes ZERO direct pushes to refs/heads/main:
 #   1. Compute the next version from npm's published latest (not just
 #      package.json — main's package.json can lag npm), bumped by the chosen type.
-#   2. Build, test, and `npm publish` via OIDC Trusted Publishing (no NPM_TOKEN).
-#   3. Push ONLY the git tag (refs/tags/* is not covered by main's branch
-#      protection or the protect-default ruleset, which targets the default
-#      branch only) plus a short-lived release branch.
-#   4. Reconcile main's package.json by opening an AUTO-MERGING PR from that
-#      branch (0 required approvals → merges itself once the 3 required checks
-#      pass), then dispatching those checks on the branch. A PR opened with the
-#      default GITHUB_TOKEN does not auto-trigger pull_request checks (GitHub's
+#   2. Build and test, then establish the IMMUTABLE git refs FIRST: push only the
+#      tag (refs/tags/* is not covered by main's branch protection or the
+#      protect-default ruleset, which targets the default branch only) plus a
+#      short-lived release branch, create the GitHub Release, and open an
+#      AUTO-MERGING PR for the package.json bump.
+#   3. `npm publish` via OIDC Trusted Publishing (no NPM_TOKEN) runs LAST — the
+#      most failure-prone step. If it fails, nothing is orphaned (the tag/Release
+#      /PR already exist) and a re-run re-publishes the SAME version (recovery).
+#   4. The reconcile PR is auto-merged (0 required approvals → merges itself once
+#      the 3 required checks pass), using --merge (NOT squash) so the tagged
+#      commit stays reachable from main. A PR opened with the default
+#      GITHUB_TOKEN does not auto-trigger pull_request checks (GitHub's
 #      no-recursion rule), so we explicitly `gh workflow run` ci.yml and
 #      pr-validation.yml on the branch — workflow_dispatch is the documented
 #      exception to that rule, so these run as genuine CI and report the
@@ -108,11 +112,26 @@ jobs:
         NEW_VERSION=$(node -p "require('./package.json').version")
         TAG="v$NEW_VERSION"
 
-        # Never clobber an existing tag (local mirror or remote).
-        if git rev-parse "$TAG" >/dev/null 2>&1 \
-           || git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-          echo "::error::Tag $TAG already exists — refusing to republish."
+        # Refuse only if this version is ALREADY PUBLISHED on npm — npm is the
+        # source of truth for "released". An existing git *tag* alone must NOT
+        # block: publish is now the last step, so a tag with no matching npm
+        # version means a prior run pushed the refs but its publish didn't
+        # complete. That run must be allowed to re-publish the same version
+        # (recovery, detected below) — which is exactly the self-heal the tag
+        # ordering is designed to give.
+        if npm view "$PKG_NAME@$NEW_VERSION" version >/dev/null 2>&1; then
+          echo "::error::$PKG_NAME@$NEW_VERSION is already published to npm — refusing to republish."
           exit 1
+        fi
+
+        # Recovery: tag already on the remote but the version is not on npm =>
+        # a previous run created the immutable refs (tag/branch/Release/PR) but
+        # failed at (or before) publish. Re-publish the existing tagged commit
+        # instead of recreating refs.
+        RECOVERY=false
+        if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+          RECOVERY=true
+          echo "Tag $TAG exists but $NEW_VERSION is not on npm — recovery re-publish of the existing tag."
         fi
 
         {
@@ -121,16 +140,21 @@ jobs:
           echo "new_version=$NEW_VERSION"
           echo "tag_name=$TAG"
           echo "branch=release/$TAG"
+          echo "recovery=$RECOVERY"
         } >> "$GITHUB_OUTPUT"
-        echo "Releasing $PKG_NAME $BASE -> $NEW_VERSION ($TAG)"
+        echo "Releasing $PKG_NAME $BASE -> $NEW_VERSION ($TAG), recovery=$RECOVERY"
 
-    - name: Build project
-      run: yarn build
-
-    - name: Run tests
-      run: yarn test
+    # --- Establish the immutable git refs BEFORE publish ---------------------
+    # Order matters: the tag, reconcile branch, GitHub Release and auto-merge PR
+    # are all created first, and `npm publish` is the LAST failure-prone step.
+    # If publish fails, nothing is orphaned (the refs exist) and a re-run
+    # re-publishes the same version (recovery path). The old order published
+    # first, so a post-publish failure left the version live on npm with no tag,
+    # no Release and main unreconciled — and would not self-heal (the next run's
+    # npm-derived base bumped past it).
 
     - name: Prepare release branch and tag
+      if: steps.version.outputs.recovery == 'false'
       run: |
         set -euo pipefail
         git checkout -b "${{ steps.version.outputs.branch }}"
@@ -138,42 +162,46 @@ jobs:
         git commit -m "chore: release ${{ steps.version.outputs.tag_name }}"
         git tag "${{ steps.version.outputs.tag_name }}"
 
-    - name: Publish to npm
-      # OIDC Trusted Publishing (no NPM_TOKEN). The version is already set in the
-      # runner's package.json; publish happens before any push so a failure here
-      # leaves nothing pushed to clean up.
-      run: npm publish --access public --provenance
-
-    - name: Push tag and release branch (never main)
+    - name: Check out existing tag (recovery re-publish)
+      if: steps.version.outputs.recovery == 'true'
       run: |
         set -euo pipefail
-        # refs/tags/* is not covered by main's branch protection or the
-        # protect-default ruleset, and the release branch is not protected.
-        git push origin "${{ steps.version.outputs.tag_name }}"
-        git push origin "${{ steps.version.outputs.branch }}"
+        TAG="${{ steps.version.outputs.tag_name }}"
+        git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+        git checkout "refs/tags/$TAG"
 
-    - name: Create GitHub Release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release create "${{ steps.version.outputs.tag_name }}" \
-          --title "Release ${{ steps.version.outputs.tag_name }}" \
-          --notes "Automated release. ${{ steps.version.outputs.base_version }} -> ${{ steps.version.outputs.new_version }}. Published to npm via OIDC." \
-          ${{ contains(steps.version.outputs.new_version, '-') && '--prerelease' || '' }}
+    - name: Build project
+      run: yarn build
 
-    - name: Open reconcile PR (auto-merge) for package.json bump
+    - name: Run tests
+      run: yarn test
+
+    - name: Push refs, create Release, open auto-merge PR (never pushes main)
+      if: steps.version.outputs.recovery == 'false'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -euo pipefail
+        TAG="${{ steps.version.outputs.tag_name }}"
         BRANCH="${{ steps.version.outputs.branch }}"
         VER="${{ steps.version.outputs.new_version }}"
+
+        # Push the immutable refs first. refs/tags/* is not covered by main's
+        # branch protection or the protect-default ruleset, and the release
+        # branch is not protected.
+        git push origin "$TAG"
+        git push origin "$BRANCH"
+
+        gh release create "$TAG" \
+          --title "Release $TAG" \
+          --notes "Automated release. ${{ steps.version.outputs.base_version }} -> $VER. Published to npm via OIDC." \
+          ${{ contains(steps.version.outputs.new_version, '-') && '--prerelease' || '' }}
 
         PR_URL=$(gh pr create \
           --base main \
           --head "$BRANCH" \
           --title "chore: bump version to $VER" \
-          --body "Reconciles \`main\`'s \`package.json\` with the published release **$VER** (already on npm + tagged \`v$VER\`). Opened automatically by the Release workflow; no commit was pushed directly to \`main\`. Auto-merges once the required checks pass.")
+          --body "Reconciles \`main\`'s \`package.json\` with release **$VER** (tagged \`$TAG\`). Opened automatically by the Release workflow; no commit is pushed directly to \`main\`. Merged (not squashed) so the tagged commit stays reachable from \`main\`. Auto-merges once the required checks pass.")
         echo "Opened $PR_URL"
 
         # A PR opened with GITHUB_TOKEN does NOT auto-trigger pull_request checks
@@ -183,7 +211,16 @@ jobs:
         gh workflow run ci.yml --ref "$BRANCH"
         gh workflow run pr-validation.yml --ref "$BRANCH"
 
-        # Arm auto-merge; GitHub merges once the 3 required checks are green,
-        # then deletes the short-lived release branch.
-        gh pr merge "$PR_URL" --auto --squash --delete-branch
-        echo "Auto-merge armed for $PR_URL"
+        # --merge, NOT --squash: a squash makes a NEW commit on main, leaving
+        # the tagged release-branch commit off mainline (git describe / bisect /
+        # npm provenance auditing would find the tag off-history). A merge keeps
+        # the tagged commit an ancestor of main. --delete-branch tidies up.
+        gh pr merge "$PR_URL" --auto --merge --delete-branch
+        echo "Auto-merge (merge commit) armed for $PR_URL"
+
+    - name: Publish to npm
+      # LAST failure-prone step. OIDC Trusted Publishing (no NPM_TOKEN); the
+      # version is already set in the working tree (the release-branch commit, or
+      # the checked-out tag on recovery). Every immutable ref already exists, so
+      # a failure here orphans nothing and the run is safe to repeat.
+      run: npm publish --access public --provenance
