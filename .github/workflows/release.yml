@@ -1,5 +1,10 @@
 name: Release
 
+# Surfaces the chosen bump type in the Actions list row. The resolved version
+# number is computed mid-run (from npm latest), so it can't go here — the job's
+# step summary shows the exact vX.Y.Z instead.
+run-name: Release (${{ inputs.version }})
+
 # Release flow that respects branch protection on `main`
 # (PR-required + CI-required + enforce_admins=true).
 #
@@ -148,6 +153,24 @@ jobs:
         } >> "$GITHUB_OUTPUT"
         echo "Releasing $PKG_NAME $BASE -> $NEW_VERSION ($TAG), recovery=$RECOVERY"
 
+        # Surface the resolved version at the top of the run page (renders even
+        # if a later step fails, so you can always see what a run targeted).
+        # The npm "Published" confirmation is appended by the publish step.
+        REL_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+        {
+          echo "## Release \`$PKG_NAME@$NEW_VERSION\`"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| **Version** | \`$NEW_VERSION\` (bump: \`${{ github.event.inputs.version }}\`, base \`$BASE\`) |"
+          echo "| **Tag** | [\`$TAG\`]($REL_URL) |"
+          echo "| **npm** | https://www.npmjs.com/package/$PKG_NAME/v/$NEW_VERSION |"
+          if [ "$RECOVERY" = "true" ]; then
+            echo "| **Recovery run** | reconciling missing artifacts |"
+          fi
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+
     # --- Establish the immutable git refs BEFORE publish ---------------------
     # Order matters: the tag, reconcile branch, GitHub Release and auto-merge PR
     # are all created first, and `npm publish` is the LAST failure-prone step.
@@ -259,9 +282,12 @@ jobs:
           echo "Auto-merge (merge commit) armed for $PR_URL."
         fi
 
-    - name: Publish to npm
+    - name: Publish ${{ steps.version.outputs.pkg_name }}@${{ steps.version.outputs.new_version }} to npm
       # LAST failure-prone step. OIDC Trusted Publishing (no NPM_TOKEN); the
       # version is already set in the working tree (the release-branch commit, or
       # the checked-out tag on recovery). Every immutable ref already exists, so
       # a failure here orphans nothing and the run is safe to repeat.
-      run: npm publish --access public --provenance
+      run: |
+        set -euo pipefail
+        npm publish --access public --provenance
+        echo "✅ Published \`${{ steps.version.outputs.pkg_name }}@${{ steps.version.outputs.new_version }}\` to npm." >> "$GITHUB_STEP_SUMMARY"
