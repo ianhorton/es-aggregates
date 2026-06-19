@@ -195,7 +195,20 @@ jobs:
         set -euo pipefail
         TAG="${{ steps.version.outputs.tag_name }}"
         git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
-        git checkout "refs/tags/$TAG"
+        # The "Determine next version" step bumps package.json in the working
+        # tree (via `npm version`) to feed the normal path's release commit. On
+        # the recovery path we don't want that edit — the tagged commit already
+        # carries the correct version — so force the checkout: a plain
+        # `git checkout <tag>` ABORTS rather than overwrite the dirty package.json
+        # ("Your local changes would be overwritten"). `-f` discards any tracked
+        # working-tree changes, and `git reset --hard` + `git clean -fd` leave
+        # the tree byte-for-byte equal to the tag so no later git step in the
+        # recovery path can trip over leftover state.
+        git checkout -f "refs/tags/$TAG"
+        git reset --hard "refs/tags/$TAG"
+        git clean -fd
+        echo "Working tree at $TAG:"
+        git status --porcelain || true
 
     - name: Build project
       run: yarn build
