@@ -17,7 +17,7 @@ import { Logger, LogLevel } from "@sailplane/logger";
 import { IEvent } from "../event/models/event";
 import { IPersistedEvent } from "../event/models/persisted-event";
 import { AggregateRoot } from "./aggregate-root";
-import { decrypt, encrypt } from "./encryption";
+import { decrypt, encrypt, isEncrypted } from "./encryption";
 
 const logger = new Logger("repository");
 
@@ -78,34 +78,55 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     aggregate.clearChanges();
   };
 
-  // Applies f (encrypt/decrypt) to each allow-listed field that is actually
-  // present, and reports back exactly which fields it transformed. The caller
-  // derives the persisted encryptedProps marker from `transformed`, so the
-  // marker can never desync from what was really encrypted (single source of
-  // truth — the presence check lives here and nowhere else).
-  private changeProps = (
-    props: any,
-    f: (data: string, key: string) => string,
+  /**
+   * Encrypt the write-time-declared PII fields. `encryptedProps` is the STATIC
+   * per-event-type declaration of which props carry PII (used only to select
+   * fields here). With no key, values are left plaintext — they carry no
+   * envelope, so the read path never decrypts them. Returns a new object.
+   */
+  private encryptData = (
+    props: Record<string, unknown>,
     encryptionKey?: string,
     encryptedProps?: string[]
-  ): { data: {}; transformed: string[] } => {
-    if (encryptionKey === undefined) return { data: props, transformed: [] };
-    if (encryptedProps === undefined) return { data: props, transformed: [] };
-
-    const transformed: string[] = [];
-    for (let index = 0; index < encryptedProps.length; index++) {
-      const propertyName = encryptedProps[index];
-      const value = props[propertyName];
-      // An allow-listed field may be absent on a given event (e.g.
+  ): Record<string, unknown> => {
+    if (encryptionKey === undefined || encryptedProps === undefined) {
+      return props;
+    }
+    const result: Record<string, unknown> = { ...props };
+    for (const propertyName of encryptedProps) {
+      const value = result[propertyName];
+      // An allow-listed field may be absent on a given event (e.g. a
       // MessageCreated lists both text and imageUrl but populates only one).
-      // Skip absent fields so encrypt/decrypt is never called with undefined,
-      // and keep absent as absent (do NOT coerce to "").
+      // Skip absent fields so encrypt is never called with undefined, and keep
+      // absent as absent (do NOT coerce to "").
       if (value !== undefined && value !== null) {
-        props[propertyName] = f(value, encryptionKey);
-        transformed.push(propertyName);
+        result[propertyName] = encrypt(String(value), encryptionKey);
       }
     }
-    return { data: props, transformed };
+    return result;
+  };
+
+  /**
+   * Decrypt every field whose VALUE is an encryption envelope — the decision is
+   * made from the value itself (self-describing), never from a persisted marker.
+   * Plaintext fields pass through untouched. Returns a new object.
+   */
+  private decryptData = (
+    data: Record<string, unknown>,
+    encryptionKey?: string
+  ): Record<string, unknown> => {
+    const result: Record<string, unknown> = { ...data };
+    for (const [name, value] of Object.entries(result)) {
+      if (isEncrypted(value)) {
+        if (encryptionKey === undefined) {
+          throw new Error(
+            `Encountered an encrypted value for "${name}" but no encryption key was provided`
+          );
+        }
+        result[name] = decrypt(value, encryptionKey);
+      }
+    }
+    return result;
   };
 
   private transactWriteAsync = async (
@@ -120,29 +141,22 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const event = changes[index];
       const { eventType, timestamp, encryptedProps, ...otherProps } = event;
 
-      // Stamp the encryptedProps marker from exactly what changeProps actually
-      // encrypted. With no key (encryption off) changeProps leaves the data
-      // plaintext and reports nothing transformed, so persisting a marker would
-      // falsely claim the fields are ciphertext — corrupting the read path (it
-      // would run decrypt() on plaintext when rehydrating) and defeating any
-      // marker-trusting backfill (it would skip plaintext as "already
-      // encrypted"). Plaintext events therefore carry no marker at all. Absent
-      // allow-listed fields (e.g. a MessageCreated with text but no imageUrl)
-      // are likewise excluded, because changeProps does not transform them.
-      const { data, transformed } = this.changeProps(
-        otherProps,
-        encrypt,
-        encryptionKey,
-        encryptedProps
-      );
-
+      // encryptedProps is the STATIC, write-time declaration of which fields
+      // carry PII — used only to SELECT fields to encrypt, then discarded. It is
+      // deliberately NOT persisted (qp-9k9o): the read path is envelope-based
+      // (values self-describe via the ENC1 sentinel), so a persisted marker is
+      // unnecessary and — as a per-row field — was dangerous when treated as
+      // runtime state (this reverts the qp-qdwt marker stamping).
       const persistedEvent: IPersistedEvent = {
         aggregateId,
         eventType,
         timestamp,
         aggregateVersion: expectedVersion + index,
-        encryptedProps: transformed.length > 0 ? transformed : undefined,
-        data,
+        data: this.encryptData(
+          otherProps as Record<string, unknown>,
+          encryptionKey,
+          encryptedProps
+        ),
       };
 
       const item = marshall(persistedEvent, { removeUndefinedValues: true });
@@ -200,25 +214,19 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     documentClient.destroy();
 
     if (items.length > 0) {
-      const events = items.map(
-        ({ eventType, timestamp, encryptedProps, data }: any) => {
-          const { data: decryptedData } = this.changeProps(
-            data,
-            decrypt,
-            encryptionKey,
-            encryptedProps
-          );
+      const events = items.map(({ eventType, timestamp, data }: any) => {
+        // Decrypt is driven by the values themselves (ENC1 envelopes), not by a
+        // persisted encryptedProps marker (which is no longer written). (qp-9k9o)
+        const decryptedData = this.decryptData(data, encryptionKey);
 
-          const event: IEvent = {
-            eventType,
-            timestamp,
-            encryptedProps,
-            ...decryptedData,
-          };
+        const event: IEvent = {
+          eventType,
+          timestamp,
+          ...decryptedData,
+        };
 
-          return event;
-        }
-      );
+        return event;
+      });
       return events;
     } else {
       const e: IEvent[] = [];
