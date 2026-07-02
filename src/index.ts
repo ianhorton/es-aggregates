@@ -1,5 +1,6 @@
 export * from "./aggregate/aggregate-root";
 export * from "./aggregate/entity";
+export * from "./aggregate/encryption";
 export * from "./event/event-base";
 export * from "./aggregate/repository";
 export * from "./event/models/event";

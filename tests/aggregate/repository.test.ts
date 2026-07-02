@@ -2,6 +2,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { v4 } from "uuid";
 
 import { Repository } from "../../src";
+import { isEncrypted } from "../../src/aggregate/encryption";
 
 import { TestAggregateRoot } from "../test-objects";
 import {
@@ -130,7 +131,7 @@ describe("Repository Tests", () => {
     }
   });
 
-  it("should stamp encryptedProps only for fields actually encrypted (with key)", async () => {
+  it("should NEVER persist encryptedProps; the encrypted field is a self-describing envelope (with key)", async () => {
     // arrange
     const { ddbc, id } = await setupAndExecuteAsync(true);
     const dc = DynamoDBDocumentClient.from(ddbc);
@@ -144,23 +145,22 @@ describe("Repository Tests", () => {
     );
 
     // assert
-    // TestAggregateRootCreated allow-lists ["name"] and name is populated, so
-    // the marker reflects exactly the field that was encrypted at rest.
+    // qp-9k9o: encryptedProps is a STATIC write-time declaration and is never
+    // persisted — the read path is envelope-based. The encrypted value carries
+    // its own ENC1 sentinel, so the row needs no marker.
     if (Item) {
-      expect(Item.encryptedProps).toEqual(["name"]);
+      expect(Item.encryptedProps).toBeUndefined();
+      expect(isEncrypted(Item.data.name)).toBe(true);
     } else {
       fail("Event not found in database.");
     }
   });
 
-  it("should NOT stamp encryptedProps when written without a key (plaintext)", async () => {
+  it("should write plaintext (no envelope, no marker) when written without a key", async () => {
     // arrange
-    // qp-389/qp-qdwt regression: the write path used to stamp the static
-    // encryptedProps allow-list onto EVERY event, even when no key was supplied
-    // and the data stayed plaintext. That false marker is a data-corruption
-    // landmine — once encryption is later enabled the read path would run
-    // decrypt() on plaintext — and it made marker-trusting backfills skip the
-    // plaintext as "already encrypted". A plaintext event must carry no marker.
+    // qp-9k9o: without a key the value stays plaintext — it carries no ENC1
+    // sentinel, so the read path never decrypts it (landmine impossible), and no
+    // encryptedProps marker is written.
     const { ddbc, id, name } = await setupAndExecuteAsync(false);
     const dc = DynamoDBDocumentClient.from(ddbc);
 
@@ -175,6 +175,7 @@ describe("Repository Tests", () => {
     // assert
     if (Item) {
       expect(Item.encryptedProps).toBeUndefined();
+      expect(isEncrypted(Item.data.name)).toBe(false);
       expect(Item.data.name).toBe(name); // data is genuinely plaintext
     } else {
       fail("Event not found in database.");
@@ -268,6 +269,22 @@ describe("Repository Tests", () => {
 
     // act / assert
     await expect(repo.writeAsync(ar, key)).resolves.not.toThrow();
+  });
+
+  it("throws at write when an encryptedProps field is not a string (string-only contract)", async () => {
+    // arrange
+    // qp-9k9o review #1: encryptedProps is a STRING-ONLY contract. A non-string
+    // value must fail loudly at write, not be String()-coerced into
+    // "[object Object]" and silently persisted.
+    const id = v4();
+    const key = "key";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    // "text" is declared PII (encryptedProps) but given a non-string value.
+    ar.createMessage({ not: "a string" } as unknown as string);
+
+    // act / assert
+    await expect(repo.writeAsync(ar, key)).rejects.toThrow(/expected a string/i);
   });
 
   it("should round-trip an event with one populated and one absent allow-listed field", async () => {
