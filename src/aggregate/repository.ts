@@ -100,7 +100,17 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       // Skip absent fields so encrypt is never called with undefined, and keep
       // absent as absent (do NOT coerce to "").
       if (value !== undefined && value !== null) {
-        result[propertyName] = encrypt(String(value), encryptionKey);
+        // encryptedProps is a STRING-ONLY contract. Fail loudly on a non-string
+        // rather than String()-coercing (which would silently persist
+        // "[object Object]" and read back a corrupted value) — restoring the
+        // loud failure the old CBC path gave. (qp-9k9o, review comment #1)
+        if (typeof value !== "string") {
+          throw new Error(
+            `Cannot encrypt encryptedProps field "${propertyName}": expected a string, got ${typeof value}. ` +
+              `Fields declared in an event's encryptedProps must be string-valued.`
+          );
+        }
+        result[propertyName] = encrypt(value, encryptionKey);
       }
     }
     return result;

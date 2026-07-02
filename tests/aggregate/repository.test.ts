@@ -271,6 +271,22 @@ describe("Repository Tests", () => {
     await expect(repo.writeAsync(ar, key)).resolves.not.toThrow();
   });
 
+  it("throws at write when an encryptedProps field is not a string (string-only contract)", async () => {
+    // arrange
+    // qp-9k9o review #1: encryptedProps is a STRING-ONLY contract. A non-string
+    // value must fail loudly at write, not be String()-coerced into
+    // "[object Object]" and silently persisted.
+    const id = v4();
+    const key = "key";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    // "text" is declared PII (encryptedProps) but given a non-string value.
+    ar.createMessage({ not: "a string" } as unknown as string);
+
+    // act / assert
+    await expect(repo.writeAsync(ar, key)).rejects.toThrow(/expected a string/i);
+  });
+
   it("should round-trip an event with one populated and one absent allow-listed field", async () => {
     // arrange
     const id = v4();
