@@ -54,15 +54,23 @@ const b64url = (b: Buffer): string => b.toString("base64url");
 const fromB64url = (s: string): Buffer => Buffer.from(s, "base64url");
 
 /**
- * True iff `value` is an encryption envelope (carries the sentinel prefix).
- * base64url never contains the "." delimiter, so a plaintext value can only be
- * mistaken for an envelope if it literally begins with "ENC1." — and even then
- * the GCM tag rejects it on decrypt.
+ * True iff `value` has the full envelope shape — the ENC1 sentinel AND exactly
+ * six non-empty "."-separated parts. Validating the whole shape (not just the
+ * prefix) narrows the read-path blast radius: a plaintext value merely beginning
+ * "ENC1." but not shaped like an envelope is treated as plaintext. A plaintext
+ * that coincidentally matches the full shape still fails the GCM tag on decrypt
+ * (callers pass it through). base64url never contains "." so real envelopes
+ * always split into exactly six parts.
  */
 function isEncrypted(value: unknown): value is string {
-  return (
-    typeof value === "string" && value.startsWith(ENVELOPE_VERSION + DELIMITER)
-  );
+  if (
+    typeof value !== "string" ||
+    !value.startsWith(ENVELOPE_VERSION + DELIMITER)
+  ) {
+    return false;
+  }
+  const parts = value.split(DELIMITER);
+  return parts.length === ENVELOPE_PARTS && parts.every((p) => p.length > 0);
 }
 
 function encrypt(data: string, key: string): string {

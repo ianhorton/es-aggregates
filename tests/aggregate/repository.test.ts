@@ -8,6 +8,7 @@ import { TestAggregateRoot } from "../test-objects";
 import {
   DynamoDBDocumentClient,
   GetCommand,
+  PutCommand,
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
@@ -131,7 +132,7 @@ describe("Repository Tests", () => {
     }
   });
 
-  it("should NEVER persist encryptedProps; the encrypted field is a self-describing envelope (with key)", async () => {
+  it("persists the faithful encryptedProps marker and envelopes the field (with key)", async () => {
     // arrange
     const { ddbc, id } = await setupAndExecuteAsync(true);
     const dc = DynamoDBDocumentClient.from(ddbc);
@@ -145,23 +146,22 @@ describe("Repository Tests", () => {
     );
 
     // assert
-    // qp-9k9o: encryptedProps is a STATIC write-time declaration and is never
-    // persisted — the read path is envelope-based. The encrypted value carries
-    // its own ENC1 sentinel, so the row needs no marker.
+    // qp-9k9o: encryptedProps is persisted as the FAITHFUL static declaration
+    // (scope-only marker); the value itself is a self-describing ENC1 envelope.
     if (Item) {
-      expect(Item.encryptedProps).toBeUndefined();
+      expect(Item.encryptedProps).toEqual(["name"]);
       expect(isEncrypted(Item.data.name)).toBe(true);
     } else {
       fail("Event not found in database.");
     }
   });
 
-  it("should write plaintext (no envelope, no marker) when written without a key", async () => {
+  it("(f) key absent: writes plaintext + still persists the faithful marker; read does not decrypt", async () => {
     // arrange
-    // qp-9k9o: without a key the value stays plaintext — it carries no ENC1
-    // sentinel, so the read path never decrypts it (landmine impossible), and no
-    // encryptedProps marker is written.
-    const { ddbc, id, name } = await setupAndExecuteAsync(false);
+    // qp-9k9o: the marker is SCOPE-ONLY, so it is persisted even with no key.
+    // The value has no ENC1 sentinel, so the read path passes it through
+    // untouched — presence in the marker never means "is encrypted".
+    const { ddbc, id, name, key, repo } = await setupAndExecuteAsync(false);
     const dc = DynamoDBDocumentClient.from(ddbc);
 
     // act
@@ -172,14 +172,93 @@ describe("Repository Tests", () => {
       })
     );
 
-    // assert
+    // assert: faithful marker persisted, value plaintext
     if (Item) {
-      expect(Item.encryptedProps).toBeUndefined();
+      expect(Item.encryptedProps).toEqual(["name"]);
       expect(isEncrypted(Item.data.name)).toBe(false);
-      expect(Item.data.name).toBe(name); // data is genuinely plaintext
+      expect(Item.data.name).toBe(name);
     } else {
       fail("Event not found in database.");
     }
+
+    // read WITH a key: the plaintext value is not an envelope -> not decrypted
+    const readAr = await repo.readAsync(id, key);
+    expect(readAr?.name).toBe(name);
+  });
+
+  it("(a) does not touch a NON-PII field even if its value is envelope-shaped (scope)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const envelopeShaped = "ENC1.aes-256-gcm.kid.aaaa.bbbb.cccc";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    // secret is PII; plain is NOT declared and carries an envelope-shaped value.
+    ar.createSecret("real-secret", envelopeShaped);
+
+    // act
+    await repo.writeAsync(ar, key);
+    const readAr = await repo.readAsync(id, key);
+
+    // assert
+    expect(readAr?.plain).toBe(envelopeShaped); // out of scope -> untouched
+    expect(readAr?.secret).toBe("real-secret"); // in scope -> decrypts
+  });
+
+  it("(b) passes through a scoped PII field that is envelope-shaped PLAINTEXT (not bricked)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const shapedPlaintext = "ENC1.aes-256-gcm.kid.aaaa.bbbb.cccc";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret(shapedPlaintext); // secret happens to look like an envelope
+
+    // act: write WITHOUT a key (secret stored as plaintext), read WITH a key
+    await repo.writeAsync(ar);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const readAr = await repo.readAsync(id, key);
+    errorSpy.mockRestore();
+
+    // assert: GCM fails on the fake envelope -> passthrough, not bricked
+    expect(readAr?.secret).toBe(shapedPlaintext);
+  });
+
+  it("(c) passes through a TAMPERED PII ciphertext and logs loudly (integrity)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const { ddbc, repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret("top-secret");
+    await repo.writeAsync(ar, key); // secret -> ENC1 envelope
+
+    // tamper the stored ciphertext segment
+    const dc = DynamoDBDocumentClient.from(ddbc);
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 1 },
+      })
+    );
+    const parts = (Item!.data.secret as string).split(".");
+    parts[4] = parts[4] === "AAAA" ? "BBBB" : "AAAA";
+    const tampered = parts.join(".");
+    await dc.send(
+      new PutCommand({
+        TableName: "test-service-event-dev",
+        Item: { ...Item, data: { ...Item!.data, secret: tampered } },
+      })
+    );
+
+    // act
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const readAr = await repo.readAsync(id, key);
+
+    // assert: passthrough (not bricked) + logged loudly
+    expect(readAr?.secret).toBe(tampered);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("should return and AggregateRoot with unencrypted properties", async () => {

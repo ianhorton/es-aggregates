@@ -1,8 +1,10 @@
 import { IEvent } from './event';
 
-// qp-9k9o: encryptedProps is a STATIC write-time declaration, never persisted —
-// the read path is envelope-based. Omit it so it cannot be written to the row.
-export interface IPersistedEvent extends Omit<IEvent, 'encryptedProps'> {
+// qp-9k9o: encryptedProps IS persisted, but as a SCOPE-ONLY marker — the FAITHFUL
+// static array the event declares (never the qp-qdwt runtime "what was actually
+// encrypted"). It bounds which fields the read path inspects; the ENC1 sentinel
+// on the value itself is the sole is-encrypted signal.
+export interface IPersistedEvent extends IEvent {
   readonly aggregateId: string;
   readonly aggregateVersion: number;
   readonly data: any;

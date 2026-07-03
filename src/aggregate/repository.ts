@@ -117,23 +117,52 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
   };
 
   /**
-   * Decrypt every field whose VALUE is an encryption envelope — the decision is
-   * made from the value itself (self-describing), never from a persisted marker.
-   * Plaintext fields pass through untouched. Returns a new object.
+   * Decrypt PII fields on read (qp-9k9o). Two independent gates:
+   *
+   *  1. SCOPE — only the fields named in the row's `encryptedProps` marker are
+   *     inspected at all (the faithful static declaration). Non-PII fields are
+   *     never touched, whatever their value → bounded blast radius.
+   *  2. SIGNAL — within scope, the ENC1 envelope sentinel on the VALUE decides
+   *     decrypt-vs-passthrough. The marker is SCOPE-ONLY: presence in it does NOT
+   *     mean "is encrypted" (that would reintroduce the qp-qdwt decrypt-on-
+   *     plaintext landmine). A plaintext scoped field passes through untouched.
+   *
+   * A declared-PII envelope that fails to decrypt (GCM auth failure — tampering
+   * or wrong key — or a missing key) is passed through UNCHANGED so a bad value
+   * cannot brick the whole aggregate, but is logged loudly so genuine tampering
+   * surfaces. Availability is chosen over hard-fail; the loud log is the
+   * tamper-detection signal.
    */
   private decryptData = (
     data: Record<string, unknown>,
-    encryptionKey?: string
+    encryptionKey?: string,
+    encryptedProps?: string[]
   ): Record<string, unknown> => {
+    if (!encryptedProps || encryptedProps.length === 0) {
+      return data;
+    }
     const result: Record<string, unknown> = { ...data };
-    for (const [name, value] of Object.entries(result)) {
-      if (isEncrypted(value)) {
+    for (const name of encryptedProps) {
+      const value = result[name];
+      // SIGNAL: only an actual envelope is decrypted — plaintext passes through.
+      if (!isEncrypted(value)) {
+        continue;
+      }
+      try {
         if (encryptionKey === undefined) {
-          throw new Error(
-            `Encountered an encrypted value for "${name}" but no encryption key was provided`
-          );
+          throw new Error("no encryption key was provided");
         }
         result[name] = decrypt(value, encryptionKey);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // Log loudly regardless of the debug logger level — this is a
+        // security-relevant event (possible tampering or key mismatch).
+        // eslint-disable-next-line no-console
+        console.error(
+          `[es-aggregates] Failed to decrypt PII field "${name}" — leaving the ` +
+            `value as-is to avoid bricking the aggregate. Cause: ${reason}. ` +
+            `Investigate: this can indicate tampering or a key mismatch.`
+        );
       }
     }
     return result;
@@ -151,17 +180,18 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const event = changes[index];
       const { eventType, timestamp, encryptedProps, ...otherProps } = event;
 
-      // encryptedProps is the STATIC, write-time declaration of which fields
-      // carry PII — used only to SELECT fields to encrypt, then discarded. It is
-      // deliberately NOT persisted (qp-9k9o): the read path is envelope-based
-      // (values self-describe via the ENC1 sentinel), so a persisted marker is
-      // unnecessary and — as a per-row field — was dangerous when treated as
-      // runtime state (this reverts the qp-qdwt marker stamping).
+      // Persist encryptedProps as a SCOPE-ONLY marker: the FAITHFUL static array
+      // exactly as the event declares it — NOT the qp-qdwt "what was actually
+      // encrypted" runtime version. It bounds which fields the read path
+      // inspects; the ENC1 sentinel on each value is the sole is-encrypted
+      // signal, so a plaintext (key-less) write still carries the marker but is
+      // never decrypted on read. (qp-9k9o)
       const persistedEvent: IPersistedEvent = {
         aggregateId,
         eventType,
         timestamp,
         aggregateVersion: expectedVersion + index,
+        encryptedProps,
         data: this.encryptData(
           otherProps as Record<string, unknown>,
           encryptionKey,
@@ -224,19 +254,26 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     documentClient.destroy();
 
     if (items.length > 0) {
-      const events = items.map(({ eventType, timestamp, data }: any) => {
-        // Decrypt is driven by the values themselves (ENC1 envelopes), not by a
-        // persisted encryptedProps marker (which is no longer written). (qp-9k9o)
-        const decryptedData = this.decryptData(data, encryptionKey);
+      const events = items.map(
+        ({ eventType, timestamp, encryptedProps, data }: any) => {
+          // Scope decryption to the row's faithful marker; within it, the ENC1
+          // sentinel on each value decides decrypt-vs-passthrough. (qp-9k9o)
+          const decryptedData = this.decryptData(
+            data,
+            encryptionKey,
+            encryptedProps
+          );
 
-        const event: IEvent = {
-          eventType,
-          timestamp,
-          ...decryptedData,
-        };
+          const event: IEvent = {
+            eventType,
+            timestamp,
+            encryptedProps,
+            ...decryptedData,
+          };
 
-        return event;
-      });
+          return event;
+        }
+      );
       return events;
     } else {
       const e: IEvent[] = [];
