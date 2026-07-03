@@ -5,3 +5,4 @@ export * from "./events/test-aggregate-root-created";
 export * from "./events/test-aggregate-root-name-changed";
 export * from "./events/test-entity-created";
 export * from "./events/test-message-created";
+export * from "./events/test-secret-created";

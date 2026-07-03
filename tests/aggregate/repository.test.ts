@@ -2,11 +2,13 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { v4 } from "uuid";
 
 import { Repository } from "../../src";
+import { isEncrypted } from "../../src/aggregate/encryption";
 
 import { TestAggregateRoot } from "../test-objects";
 import {
   DynamoDBDocumentClient,
   GetCommand,
+  PutCommand,
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
@@ -130,7 +132,7 @@ describe("Repository Tests", () => {
     }
   });
 
-  it("should stamp encryptedProps only for fields actually encrypted (with key)", async () => {
+  it("persists the faithful encryptedProps marker and envelopes the field (with key)", async () => {
     // arrange
     const { ddbc, id } = await setupAndExecuteAsync(true);
     const dc = DynamoDBDocumentClient.from(ddbc);
@@ -144,24 +146,22 @@ describe("Repository Tests", () => {
     );
 
     // assert
-    // TestAggregateRootCreated allow-lists ["name"] and name is populated, so
-    // the marker reflects exactly the field that was encrypted at rest.
+    // qp-9k9o: encryptedProps is persisted as the FAITHFUL static declaration
+    // (scope-only marker); the value itself is a self-describing ENC1 envelope.
     if (Item) {
       expect(Item.encryptedProps).toEqual(["name"]);
+      expect(isEncrypted(Item.data.name)).toBe(true);
     } else {
       fail("Event not found in database.");
     }
   });
 
-  it("should NOT stamp encryptedProps when written without a key (plaintext)", async () => {
+  it("(f) key absent: writes plaintext + still persists the faithful marker; read does not decrypt", async () => {
     // arrange
-    // qp-389/qp-qdwt regression: the write path used to stamp the static
-    // encryptedProps allow-list onto EVERY event, even when no key was supplied
-    // and the data stayed plaintext. That false marker is a data-corruption
-    // landmine — once encryption is later enabled the read path would run
-    // decrypt() on plaintext — and it made marker-trusting backfills skip the
-    // plaintext as "already encrypted". A plaintext event must carry no marker.
-    const { ddbc, id, name } = await setupAndExecuteAsync(false);
+    // qp-9k9o: the marker is SCOPE-ONLY, so it is persisted even with no key.
+    // The value has no ENC1 sentinel, so the read path passes it through
+    // untouched — presence in the marker never means "is encrypted".
+    const { ddbc, id, name, key, repo } = await setupAndExecuteAsync(false);
     const dc = DynamoDBDocumentClient.from(ddbc);
 
     // act
@@ -172,13 +172,122 @@ describe("Repository Tests", () => {
       })
     );
 
-    // assert
+    // assert: faithful marker persisted, value plaintext
     if (Item) {
-      expect(Item.encryptedProps).toBeUndefined();
-      expect(Item.data.name).toBe(name); // data is genuinely plaintext
+      expect(Item.encryptedProps).toEqual(["name"]);
+      expect(isEncrypted(Item.data.name)).toBe(false);
+      expect(Item.data.name).toBe(name);
     } else {
       fail("Event not found in database.");
     }
+
+    // read WITH a key: the plaintext value is not an envelope -> not decrypted
+    const readAr = await repo.readAsync(id, key);
+    expect(readAr?.name).toBe(name);
+  });
+
+  it("round-trips an EMPTY-string PII field (empty ciphertext, not the raw envelope)", async () => {
+    // arrange
+    // Regression: encrypt("") produces an envelope with an empty ciphertext
+    // segment; the read path must decrypt it back to "" — not leave the raw
+    // "ENC1...." string (silent corruption when a user clears an optional field).
+    const id = v4();
+    const key = "key";
+    const { ddbc, repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret(""); // scoped PII field, empty string
+
+    // act
+    await repo.writeAsync(ar, key);
+
+    // the stored value is a real envelope (encrypted at rest), not ""
+    const dc = DynamoDBDocumentClient.from(ddbc);
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 1 },
+      })
+    );
+    expect(isEncrypted(Item?.data.secret)).toBe(true);
+
+    // read back: decrypts to "" (not the raw envelope)
+    const readAr = await repo.readAsync(id, key);
+    expect(readAr?.secret).toBe("");
+  });
+
+  it("(a) does not touch a NON-PII field even if its value is envelope-shaped (scope)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const envelopeShaped = "ENC1.aes-256-gcm.kid.aaaa.bbbb.cccc";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    // secret is PII; plain is NOT declared and carries an envelope-shaped value.
+    ar.createSecret("real-secret", envelopeShaped);
+
+    // act
+    await repo.writeAsync(ar, key);
+    const readAr = await repo.readAsync(id, key);
+
+    // assert
+    expect(readAr?.plain).toBe(envelopeShaped); // out of scope -> untouched
+    expect(readAr?.secret).toBe("real-secret"); // in scope -> decrypts
+  });
+
+  it("(b) passes through a scoped PII field that is envelope-shaped PLAINTEXT (not bricked)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const shapedPlaintext = "ENC1.aes-256-gcm.kid.aaaa.bbbb.cccc";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret(shapedPlaintext); // secret happens to look like an envelope
+
+    // act: write WITHOUT a key (secret stored as plaintext), read WITH a key
+    await repo.writeAsync(ar);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const readAr = await repo.readAsync(id, key);
+    errorSpy.mockRestore();
+
+    // assert: GCM fails on the fake envelope -> passthrough, not bricked
+    expect(readAr?.secret).toBe(shapedPlaintext);
+  });
+
+  it("(c) passes through a TAMPERED PII ciphertext and logs loudly (integrity)", async () => {
+    // arrange
+    const id = v4();
+    const key = "key";
+    const { ddbc, repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret("top-secret");
+    await repo.writeAsync(ar, key); // secret -> ENC1 envelope
+
+    // tamper the stored ciphertext segment
+    const dc = DynamoDBDocumentClient.from(ddbc);
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 1 },
+      })
+    );
+    const parts = (Item!.data.secret as string).split(".");
+    parts[4] = parts[4] === "AAAA" ? "BBBB" : "AAAA";
+    const tampered = parts.join(".");
+    await dc.send(
+      new PutCommand({
+        TableName: "test-service-event-dev",
+        Item: { ...Item, data: { ...Item!.data, secret: tampered } },
+      })
+    );
+
+    // act
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const readAr = await repo.readAsync(id, key);
+
+    // assert: passthrough (not bricked) + logged loudly
+    expect(readAr?.secret).toBe(tampered);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("should return and AggregateRoot with unencrypted properties", async () => {
@@ -268,6 +377,22 @@ describe("Repository Tests", () => {
 
     // act / assert
     await expect(repo.writeAsync(ar, key)).resolves.not.toThrow();
+  });
+
+  it("throws at write when an encryptedProps field is not a string (string-only contract)", async () => {
+    // arrange
+    // qp-9k9o review #1: encryptedProps is a STRING-ONLY contract. A non-string
+    // value must fail loudly at write, not be String()-coerced into
+    // "[object Object]" and silently persisted.
+    const id = v4();
+    const key = "key";
+    const { repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "msg-ar");
+    // "text" is declared PII (encryptedProps) but given a non-string value.
+    ar.createMessage({ not: "a string" } as unknown as string);
+
+    // act / assert
+    await expect(repo.writeAsync(ar, key)).rejects.toThrow(/expected a string/i);
   });
 
   it("should round-trip an event with one populated and one absent allow-listed field", async () => {
