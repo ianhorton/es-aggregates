@@ -6,7 +6,7 @@ import { IEvent } from './models/event';
 const warnedConstructorArgTypes = new Set<string>();
 
 /**
- * Base class for domain events (qp-9k9o).
+ * Base class for domain events.
  *
  * `eventType` and `encryptedProps` are immutable per-class metadata and may be
  * declared as STATIC class fields (preferred):

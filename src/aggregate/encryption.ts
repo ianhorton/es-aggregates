@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 
 /**
- * PII encryption v2 — self-describing envelope (qp-9k9o).
+ * PII encryption v2 — self-describing envelope.
  *
  * Every encrypted value is a self-describing string:
  *
