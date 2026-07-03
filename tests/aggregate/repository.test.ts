@@ -186,6 +186,35 @@ describe("Repository Tests", () => {
     expect(readAr?.name).toBe(name);
   });
 
+  it("round-trips an EMPTY-string PII field (empty ciphertext, not the raw envelope)", async () => {
+    // arrange
+    // Regression: encrypt("") produces an envelope with an empty ciphertext
+    // segment; the read path must decrypt it back to "" — not leave the raw
+    // "ENC1...." string (silent corruption when a user clears an optional field).
+    const id = v4();
+    const key = "key";
+    const { ddbc, repo } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret(""); // scoped PII field, empty string
+
+    // act
+    await repo.writeAsync(ar, key);
+
+    // the stored value is a real envelope (encrypted at rest), not ""
+    const dc = DynamoDBDocumentClient.from(ddbc);
+    const { Item } = await dc.send(
+      new GetCommand({
+        TableName: "test-service-event-dev",
+        Key: { aggregateId: id, aggregateVersion: 1 },
+      })
+    );
+    expect(isEncrypted(Item?.data.secret)).toBe(true);
+
+    // read back: decrypts to "" (not the raw envelope)
+    const readAr = await repo.readAsync(id, key);
+    expect(readAr?.secret).toBe("");
+  });
+
   it("(a) does not touch a NON-PII field even if its value is envelope-shaped (scope)", async () => {
     // arrange
     const id = v4();

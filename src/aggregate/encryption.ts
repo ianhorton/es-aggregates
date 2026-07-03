@@ -55,12 +55,13 @@ const fromB64url = (s: string): Buffer => Buffer.from(s, "base64url");
 
 /**
  * True iff `value` has the full envelope shape — the ENC1 sentinel AND exactly
- * six non-empty "."-separated parts. Validating the whole shape (not just the
- * prefix) narrows the read-path blast radius: a plaintext value merely beginning
- * "ENC1." but not shaped like an envelope is treated as plaintext. A plaintext
- * that coincidentally matches the full shape still fails the GCM tag on decrypt
- * (callers pass it through). base64url never contains "." so real envelopes
- * always split into exactly six parts.
+ * six "."-separated parts, with the FIXED segments (alg/keyId/iv/tag) non-empty.
+ * The ciphertext segment (index 4) may be EMPTY: AES-GCM of a zero-byte plaintext
+ * (`encrypt("")`) produces zero ciphertext bytes, so a validly-encrypted empty
+ * string is `ENC1.<alg>.<keyId>.<iv>..<tag>`. Validating the whole shape (not
+ * just the prefix) narrows the read-path blast radius; a coincidental match still
+ * fails the GCM tag on decrypt (callers pass it through). base64url never
+ * contains "." so real envelopes always split into exactly six parts.
  */
 function isEncrypted(value: unknown): value is string {
   if (
@@ -70,7 +71,12 @@ function isEncrypted(value: unknown): value is string {
     return false;
   }
   const parts = value.split(DELIMITER);
-  return parts.length === ENVELOPE_PARTS && parts.every((p) => p.length > 0);
+  if (parts.length !== ENVELOPE_PARTS) {
+    return false;
+  }
+  // ciphertext (index 4) may be empty (encrypt("")); the rest must be present.
+  const [, alg, keyIdPart, ivPart, , tagPart] = parts;
+  return !!alg && !!keyIdPart && !!ivPart && !!tagPart;
 }
 
 function encrypt(data: string, key: string): string {

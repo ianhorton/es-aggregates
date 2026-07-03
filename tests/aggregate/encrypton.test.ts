@@ -31,6 +31,17 @@ describe("Encryption Tests (v2 envelope)", () => {
     expect(decrypt(encrypted, key)).toEqual(value);
   });
 
+  it("round-trips the EMPTY string (empty ciphertext segment)", () => {
+    // AES-GCM of a zero-byte plaintext yields zero ciphertext bytes, so the
+    // envelope has an empty parts[4]. isEncrypted must still recognise it and
+    // decrypt must round-trip to "" — not leak the raw envelope string.
+    const encrypted = encrypt("", key);
+    expect(isEncrypted(encrypted)).toBe(true);
+    expect(encrypted.split(".")).toHaveLength(6);
+    expect(encrypted.split(".")[4]).toBe(""); // empty ciphertext segment
+    expect(decrypt(encrypted, key)).toBe("");
+  });
+
   it("stamps the same keyId for the same key", () => {
     const kidA = encrypt(value, key).split(".")[2];
     const kidB = encrypt("other", key).split(".")[2];
