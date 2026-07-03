@@ -103,7 +103,7 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
         // encryptedProps is a STRING-ONLY contract. Fail loudly on a non-string
         // rather than String()-coercing (which would silently persist
         // "[object Object]" and read back a corrupted value) — restoring the
-        // loud failure the old CBC path gave. (qp-9k9o, review comment #1)
+        // loud failure the old CBC path gave. (review comment #1)
         if (typeof value !== "string") {
           throw new Error(
             `Cannot encrypt encryptedProps field "${propertyName}": expected a string, got ${typeof value}. ` +
@@ -117,14 +117,14 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
   };
 
   /**
-   * Decrypt PII fields on read (qp-9k9o). Two independent gates:
+   * Decrypt PII fields on read. Two independent gates:
    *
    *  1. SCOPE — only the fields named in the row's `encryptedProps` marker are
    *     inspected at all (the faithful static declaration). Non-PII fields are
    *     never touched, whatever their value → bounded blast radius.
    *  2. SIGNAL — within scope, the ENC1 envelope sentinel on the VALUE decides
    *     decrypt-vs-passthrough. The marker is SCOPE-ONLY: presence in it does NOT
-   *     mean "is encrypted" (that would reintroduce the qp-qdwt decrypt-on-
+   *     mean "is encrypted" (that would reintroduce the decrypt-on-
    *     plaintext landmine). A plaintext scoped field passes through untouched.
    *
    * A declared-PII envelope that fails to decrypt (GCM auth failure — tampering
@@ -181,11 +181,11 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const { eventType, timestamp, encryptedProps, ...otherProps } = event;
 
       // Persist encryptedProps as a SCOPE-ONLY marker: the FAITHFUL static array
-      // exactly as the event declares it — NOT the qp-qdwt "what was actually
+      // exactly as the event declares it — NOT the runtime "what was actually
       // encrypted" runtime version. It bounds which fields the read path
       // inspects; the ENC1 sentinel on each value is the sole is-encrypted
       // signal, so a plaintext (key-less) write still carries the marker but is
-      // never decrypted on read. (qp-9k9o)
+      // never decrypted on read.
       const persistedEvent: IPersistedEvent = {
         aggregateId,
         eventType,
@@ -257,7 +257,7 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       const events = items.map(
         ({ eventType, timestamp, encryptedProps, data }: any) => {
           // Scope decryption to the row's faithful marker; within it, the ENC1
-          // sentinel on each value decides decrypt-vs-passthrough. (qp-9k9o)
+          // sentinel on each value decides decrypt-vs-passthrough.
           const decryptedData = this.decryptData(
             data,
             encryptionKey,
