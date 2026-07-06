@@ -70,3 +70,45 @@ Events are stored with:
 - Supports patch, minor, major, and prerelease version bumps
 - Creates git tags, GitHub releases, and publishes to npm
 - Requires `NPM_TOKEN` secret for publishing
+## OO-First Principle
+
+**Business logic belongs with the object it operates on — as a method on the class — not in free-floating helper functions beside it.**
+
+When logic operates on a class's data (a domain entity, an adapter, a service), it belongs as a method on that class, not as:
+- Standalone / module-level helper functions hanging next to the class
+- Utility modules
+- Infrastructure adapters (for domain logic)
+
+Fold single-use helpers into the class as **private methods** (or inline them if trivial). Don't leave a `const isFoo = (x) => ...` sitting beside the class it serves.
+
+**Example — WRONG (a free-floating predicate beside the class that uses it):**
+```typescript
+const isUserNotFoundError = (error: unknown): boolean =>
+  (error as { name?: string })?.name === "UserNotFoundException";
+
+class CognitoKeyService {
+  async mintKey(userId: string) {
+    // ... catches err, calls isUserNotFoundError(err) ...
+  }
+}
+```
+
+**Example — RIGHT (folded onto the class as a private method):**
+```typescript
+class CognitoKeyService {
+  async mintKey(userId: string) {
+    // ... catches err, calls this.isUserNotFoundError(err) ...
+  }
+
+  private isUserNotFoundError(error: unknown): boolean {
+    return (error as { name?: string })?.name === "UserNotFoundException";
+  }
+}
+```
+
+**The test:** if a function takes a class's data as input and produces output meaningful to that class, it probably belongs on the class.
+
+**Exceptions:**
+- Pure, context-free transforms (e.g. XML → DTO parsing) may live in infrastructure.
+- Cross-cutting concerns (logging, metrics) stay in infrastructure.
+- External API calls go through ports/adapters.
