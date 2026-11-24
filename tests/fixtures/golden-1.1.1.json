@@ -1,0 +1,622 @@
+{
+  "about": "Raw DynamoDB items (low-level AttributeValue JSON) stored by the published es-aggregates 1.1.1, and the state it reads back from them with and without testEncryptionKey. The state is that of TestAggregateRoot in generate-golden-1.1.1.js, which wrote this file: an absent field is undefined, and version is the aggregate's expected version.",
+  "writtenBy": {
+    "es-aggregates": "1.1.1",
+    "@aws-sdk/client-dynamodb": "3.1177.0",
+    "node": "v20.20.2"
+  },
+  "testEncryptionKey": "throwaway-test-key",
+  "aggregates": [
+    {
+      "description": "plain events, over three writes",
+      "aggregateId": "golden-plain-events",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-plain-events" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "first name" },
+              "id": { "S": "golden-plain-events" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.480Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-plain-events" },
+          "eventType": { "S": "TestDetailsRecorded" },
+          "data": {
+            "M": {
+              "details": {
+                "M": {
+                  "no": { "BOOL": false },
+                  "emptyList": {
+                    "L": []
+                  },
+                  "emptyText": { "S": "" },
+                  "yes": { "BOOL": true },
+                  "nothing": { "NULL": true },
+                  "emptyMap": {
+                    "M": {}
+                  },
+                  "whole": { "N": "3" },
+                  "text": { "S": "Zoë Åström, 東京" },
+                  "list": {
+                    "L": [
+                      { "S": "a" },
+                      { "N": "1" },
+                      {
+                        "L": [
+                          { "S": "nested" }
+                        ]
+                      },
+                      {
+                        "M": {
+                          "nested": { "BOOL": true }
+                        }
+                      }
+                    ]
+                  },
+                  "map": {
+                    "M": {
+                      "kept": { "S": "kept" }
+                    }
+                  },
+                  "fraction": { "N": "-1.5" }
+                }
+              },
+              "id": { "S": "golden-plain-events" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.487Z" },
+          "aggregateVersion": { "N": "1" }
+        },
+        {
+          "aggregateId": { "S": "golden-plain-events" },
+          "eventType": { "S": "TestAggregateRootNameChanged" },
+          "data": {
+            "M": {
+              "name": { "S": "second name" },
+              "id": { "S": "golden-plain-events" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.518Z" },
+          "aggregateVersion": { "N": "2" }
+        },
+        {
+          "aggregateId": { "S": "golden-plain-events" },
+          "eventType": { "S": "TestAggregateRootNameChanged" },
+          "data": {
+            "M": {
+              "name": { "S": "third name" },
+              "id": { "S": "golden-plain-events" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.518Z" },
+          "aggregateVersion": { "N": "3" }
+        },
+        {
+          "aggregateId": { "S": "golden-plain-events" },
+          "eventType": { "S": "TestAggregateRootNameChanged" },
+          "data": {
+            "M": {
+              "name": { "S": "fourth name" },
+              "id": { "S": "golden-plain-events" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.531Z" },
+          "aggregateVersion": { "N": "4" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 5,
+          "id": "golden-plain-events",
+          "name": "fourth name",
+          "created": "2026-11-24T22:42:51.480Z",
+          "details": {
+            "no": false,
+            "emptyList": [],
+            "emptyText": "",
+            "yes": true,
+            "nothing": null,
+            "emptyMap": {},
+            "whole": 3,
+            "text": "Zoë Åström, 東京",
+            "list": [
+              "a",
+              1,
+              [
+                "nested"
+              ],
+              {
+                "nested": true
+              }
+            ],
+            "map": {
+              "kept": "kept"
+            },
+            "fraction": -1.5
+          }
+        },
+        "withoutKey": {
+          "version": 5,
+          "id": "golden-plain-events",
+          "name": "fourth name",
+          "created": "2026-11-24T22:42:51.480Z",
+          "details": {
+            "no": false,
+            "emptyList": [],
+            "emptyText": "",
+            "yes": true,
+            "nothing": null,
+            "emptyMap": {},
+            "whole": 3,
+            "text": "Zoë Åström, 東京",
+            "list": [
+              "a",
+              1,
+              [
+                "nested"
+              ],
+              {
+                "nested": true
+              }
+            ],
+            "map": {
+              "kept": "kept"
+            },
+            "fraction": -1.5
+          }
+        }
+      }
+    },
+    {
+      "description": "encrypted fields, over two writes",
+      "aggregateId": "golden-encrypted-fields",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-encrypted-fields" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.JG3L67HMabU9vqkA.ByzNOrhi8ANwJWLcxQ.W85FZSsECe08W7hRlwXxIg" },
+              "id": { "S": "golden-encrypted-fields" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.540Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-encrypted-fields" },
+          "encryptedProps": {
+            "L": [
+              { "S": "secret" }
+            ]
+          },
+          "eventType": { "S": "TestSecretCreated" },
+          "data": {
+            "M": {
+              "plain": { "S": "not declared in encryptedProps" },
+              "id": { "S": "golden-encrypted-fields" },
+              "secret": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.zkPc3e29yeSsvU2Y.1e_yZ-4F6Vk.9wDM37tlpDmvrLqn6s4l4A" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.540Z" },
+          "aggregateVersion": { "N": "1" }
+        },
+        {
+          "aggregateId": { "S": "golden-encrypted-fields" },
+          "encryptedProps": {
+            "L": [
+              { "S": "text" },
+              { "S": "imageUrl" }
+            ]
+          },
+          "eventType": { "S": "TestMessageCreated" },
+          "data": {
+            "M": {
+              "id": { "S": "golden-encrypted-fields" },
+              "text": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.scCJYpX27a-GHrPN.5ZFmYW8A2WU8lKFHajJG.RhFHoXMdCJKif6Q8wUuhqg" },
+              "imageUrl": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.g5FRvP_QNkbRCEmA.f0VpgWIT8WGvPqtPxk2wMYQWOjYzbpSydVDjJfY.QHw41UDxROU8U3_0MsHLqQ" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.544Z" },
+          "aggregateVersion": { "N": "2" }
+        },
+        {
+          "aggregateId": { "S": "golden-encrypted-fields" },
+          "eventType": { "S": "TestDetailsRecorded" },
+          "data": {
+            "M": {
+              "details": {
+                "M": {
+                  "text": { "S": "an event without encryptedProps" }
+                }
+              },
+              "id": { "S": "golden-encrypted-fields" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.544Z" },
+          "aggregateVersion": { "N": "3" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 4,
+          "id": "golden-encrypted-fields",
+          "name": "Zoë Åström",
+          "created": "2026-11-24T22:42:51.540Z",
+          "secret": "a secret",
+          "plain": "not declared in encryptedProps",
+          "messageText": "こんにちは",
+          "messageImageUrl": "https://example.com/image.png",
+          "details": {
+            "text": "an event without encryptedProps"
+          }
+        },
+        "withoutKey": {
+          "version": 4,
+          "id": "golden-encrypted-fields",
+          "name": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.JG3L67HMabU9vqkA.ByzNOrhi8ANwJWLcxQ.W85FZSsECe08W7hRlwXxIg",
+          "created": "2026-11-24T22:42:51.540Z",
+          "secret": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.zkPc3e29yeSsvU2Y.1e_yZ-4F6Vk.9wDM37tlpDmvrLqn6s4l4A",
+          "plain": "not declared in encryptedProps",
+          "messageText": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.scCJYpX27a-GHrPN.5ZFmYW8A2WU8lKFHajJG.RhFHoXMdCJKif6Q8wUuhqg",
+          "messageImageUrl": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.g5FRvP_QNkbRCEmA.f0VpgWIT8WGvPqtPxk2wMYQWOjYzbpSydVDjJfY.QHw41UDxROU8U3_0MsHLqQ",
+          "details": {
+            "text": "an event without encryptedProps"
+          }
+        }
+      }
+    },
+    {
+      "description": "events with encryptedProps written without a key, then with it",
+      "aggregateId": "golden-keyless-then-keyed",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-keyless-then-keyed" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "name written without a key" },
+              "id": { "S": "golden-keyless-then-keyed" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.552Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-keyless-then-keyed" },
+          "encryptedProps": {
+            "L": [
+              { "S": "secret" }
+            ]
+          },
+          "eventType": { "S": "TestSecretCreated" },
+          "data": {
+            "M": {
+              "plain": { "S": "plain" },
+              "id": { "S": "golden-keyless-then-keyed" },
+              "secret": { "S": "secret written without a key" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.552Z" },
+          "aggregateVersion": { "N": "1" }
+        },
+        {
+          "aggregateId": { "S": "golden-keyless-then-keyed" },
+          "encryptedProps": {
+            "L": [
+              { "S": "text" },
+              { "S": "imageUrl" }
+            ]
+          },
+          "eventType": { "S": "TestMessageCreated" },
+          "data": {
+            "M": {
+              "id": { "S": "golden-keyless-then-keyed" },
+              "text": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.b_phhxnGhzLm4Rno.coiIZ_1aRPCbPM_98KTSkLaxxIwMVYceDg._N-TFr9WbB1uBlxIVPffPQ" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.554Z" },
+          "aggregateVersion": { "N": "2" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 3,
+          "id": "golden-keyless-then-keyed",
+          "name": "name written without a key",
+          "created": "2026-11-24T22:42:51.552Z",
+          "secret": "secret written without a key",
+          "plain": "plain",
+          "messageText": "text written with the key"
+        },
+        "withoutKey": {
+          "version": 3,
+          "id": "golden-keyless-then-keyed",
+          "name": "name written without a key",
+          "created": "2026-11-24T22:42:51.552Z",
+          "secret": "secret written without a key",
+          "plain": "plain",
+          "messageText": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.b_phhxnGhzLm4Rno.coiIZ_1aRPCbPM_98KTSkLaxxIwMVYceDg._N-TFr9WbB1uBlxIVPffPQ"
+        }
+      }
+    },
+    {
+      "description": "an encrypted empty string",
+      "aggregateId": "golden-empty-string",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-empty-string" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.iNwJpWcOfegCCxTP.7p2V9A.W-w4Weq36ZmfBpBhbacdlg" },
+              "id": { "S": "golden-empty-string" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.560Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-empty-string" },
+          "encryptedProps": {
+            "L": [
+              { "S": "secret" }
+            ]
+          },
+          "eventType": { "S": "TestSecretCreated" },
+          "data": {
+            "M": {
+              "plain": { "S": "" },
+              "id": { "S": "golden-empty-string" },
+              "secret": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.HsaByWH_kWjfXBEv..AZ-0R6JQcxCn-Z1oTtFqUg" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.560Z" },
+          "aggregateVersion": { "N": "1" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 2,
+          "id": "golden-empty-string",
+          "name": "name",
+          "created": "2026-11-24T22:42:51.560Z",
+          "secret": "",
+          "plain": ""
+        },
+        "withoutKey": {
+          "version": 2,
+          "id": "golden-empty-string",
+          "name": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.iNwJpWcOfegCCxTP.7p2V9A.W-w4Weq36ZmfBpBhbacdlg",
+          "created": "2026-11-24T22:42:51.560Z",
+          "secret": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.HsaByWH_kWjfXBEv..AZ-0R6JQcxCn-Z1oTtFqUg",
+          "plain": ""
+        }
+      }
+    },
+    {
+      "description": "an absent field named in encryptedProps",
+      "aggregateId": "golden-absent-field",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-absent-field" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.plHoTreKe82oXGp0.S45XdA.5I8mMC9Y2sGOVWU5eRdjqg" },
+              "id": { "S": "golden-absent-field" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.567Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-absent-field" },
+          "encryptedProps": {
+            "L": [
+              { "S": "text" },
+              { "S": "imageUrl" }
+            ]
+          },
+          "eventType": { "S": "TestMessageCreated" },
+          "data": {
+            "M": {
+              "id": { "S": "golden-absent-field" },
+              "text": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.r5l1R1e7oO6o5cNo.QU2mb9SpC2M-Hi-7cVYHGu0Eqqgq.cfU0YrANTnFcSc6CGCTWcw" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.567Z" },
+          "aggregateVersion": { "N": "1" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 2,
+          "id": "golden-absent-field",
+          "name": "name",
+          "created": "2026-11-24T22:42:51.567Z",
+          "messageText": "text without an image"
+        },
+        "withoutKey": {
+          "version": 2,
+          "id": "golden-absent-field",
+          "name": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.plHoTreKe82oXGp0.S45XdA.5I8mMC9Y2sGOVWU5eRdjqg",
+          "created": "2026-11-24T22:42:51.567Z",
+          "messageText": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.r5l1R1e7oO6o5cNo.QU2mb9SpC2M-Hi-7cVYHGu0Eqqgq.cfU0YrANTnFcSc6CGCTWcw"
+        }
+      }
+    },
+    {
+      "description": "a null field named in encryptedProps",
+      "aggregateId": "golden-null-field",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-null-field" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.4PaV0_RQxwjjPNd4.6iUe8Q.fggwxvIwNAdZ5TOA5rCWsA" },
+              "id": { "S": "golden-null-field" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.573Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-null-field" },
+          "encryptedProps": {
+            "L": [
+              { "S": "text" },
+              { "S": "imageUrl" }
+            ]
+          },
+          "eventType": { "S": "TestMessageCreated" },
+          "data": {
+            "M": {
+              "id": { "S": "golden-null-field" },
+              "text": { "NULL": true },
+              "imageUrl": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.9FJFqyiVCnaERbFN.sMyo87YelakGlt68Xw01y7iMNehuO2UHlAisLPA.K9_9nt9VvGe7dd6RD9XCAQ" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.573Z" },
+          "aggregateVersion": { "N": "1" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 2,
+          "id": "golden-null-field",
+          "name": "name",
+          "created": "2026-11-24T22:42:51.573Z",
+          "messageText": null,
+          "messageImageUrl": "https://example.com/image.png"
+        },
+        "withoutKey": {
+          "version": 2,
+          "id": "golden-null-field",
+          "name": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.4PaV0_RQxwjjPNd4.6iUe8Q.fggwxvIwNAdZ5TOA5rCWsA",
+          "created": "2026-11-24T22:42:51.573Z",
+          "messageText": null,
+          "messageImageUrl": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.9FJFqyiVCnaERbFN.sMyo87YelakGlt68Xw01y7iMNehuO2UHlAisLPA.K9_9nt9VvGe7dd6RD9XCAQ"
+        }
+      }
+    },
+    {
+      "description": "two tampered envelopes: one altered, one cut short",
+      "aggregateId": "golden-tampered-envelopes",
+      "items": [
+        {
+          "aggregateId": { "S": "golden-tampered-envelopes" },
+          "encryptedProps": {
+            "L": [
+              { "S": "name" }
+            ]
+          },
+          "eventType": { "S": "TestAggregateRootCreated" },
+          "data": {
+            "M": {
+              "name": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.Ic10bzvjGnkr1KIZ.t5LUzw.vSXgJPht5izz_b0sqJmJww" },
+              "id": { "S": "golden-tampered-envelopes" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.579Z" },
+          "aggregateVersion": { "N": "0" }
+        },
+        {
+          "aggregateId": { "S": "golden-tampered-envelopes" },
+          "encryptedProps": {
+            "L": [
+              { "S": "secret" }
+            ]
+          },
+          "eventType": { "S": "TestSecretCreated" },
+          "data": {
+            "M": {
+              "plain": { "S": "plain" },
+              "id": { "S": "golden-tampered-envelopes" },
+              "secret": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.oi6mqtlTF9S_em3b.AQQofbnJAbY.m2_9lhWTR8lyj00e2W_h8w" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.579Z" },
+          "aggregateVersion": { "N": "1" }
+        },
+        {
+          "aggregateId": { "S": "golden-tampered-envelopes" },
+          "encryptedProps": {
+            "L": [
+              { "S": "text" },
+              { "S": "imageUrl" }
+            ]
+          },
+          "eventType": { "S": "TestMessageCreated" },
+          "data": {
+            "M": {
+              "id": { "S": "golden-tampered-envelopes" },
+              "text": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.CPRsWT--yzxsopg1.DhMzuQ" },
+              "imageUrl": { "S": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.A0yfzdWXO6pJtbKn.hJLpQu6L6VcwNQLAZaax8PH0hgEtbCljeDzj1OY.Gm4RZSvF7dgdXKc7yTlzwA" }
+            }
+          },
+          "timestamp": { "S": "2026-11-24T22:42:51.580Z" },
+          "aggregateVersion": { "N": "2" }
+        }
+      ],
+      "expected": {
+        "withTestKey": {
+          "version": 3,
+          "id": "golden-tampered-envelopes",
+          "name": "name",
+          "created": "2026-11-24T22:42:51.579Z",
+          "secret": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.oi6mqtlTF9S_em3b.AQQofbnJAbY.m2_9lhWTR8lyj00e2W_h8w",
+          "plain": "plain",
+          "messageText": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.CPRsWT--yzxsopg1.DhMzuQ",
+          "messageImageUrl": "https://example.com/image.png"
+        },
+        "withoutKey": {
+          "version": 3,
+          "id": "golden-tampered-envelopes",
+          "name": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.Ic10bzvjGnkr1KIZ.t5LUzw.vSXgJPht5izz_b0sqJmJww",
+          "created": "2026-11-24T22:42:51.579Z",
+          "secret": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.oi6mqtlTF9S_em3b.AQQofbnJAbY.m2_9lhWTR8lyj00e2W_h8w",
+          "plain": "plain",
+          "messageText": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.CPRsWT--yzxsopg1.DhMzuQ",
+          "messageImageUrl": "ENC1.aes-256-gcm.Ksmc2yBgTfcN.A0yfzdWXO6pJtbKn.hJLpQu6L6VcwNQLAZaax8PH0hgEtbCljeDzj1OY.Gm4RZSvF7dgdXKc7yTlzwA"
+        }
+      }
+    }
+  ]
+}

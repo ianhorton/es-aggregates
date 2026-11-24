@@ -55,6 +55,22 @@ export class TestAggregateRoot extends AggregateRoot {
     return this._details;
   }
 
+  // everything the events in golden-1.1.1.json build up, in the form the
+  // fixture saves it
+  public get state(): Record<string, unknown> {
+    return {
+      version: this.getExpectedVersion(),
+      id: this._id,
+      name: this._name,
+      created: this._created,
+      messageText: this._messageText,
+      messageImageUrl: this._messageImageUrl,
+      secret: this._secret,
+      plain: this._plain,
+      details: this._details,
+    };
+  }
+
   constructor() {
     super();
 
