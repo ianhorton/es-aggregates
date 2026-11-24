@@ -4,6 +4,7 @@ import { DummyEntityCreated, TestEntity } from "./test-entity"
 import { TestEntityCreated } from "./events/test-entity-created";
 import { TestAggregateRootNameChanged } from "./events/test-aggregate-root-name-changed";
 import { TestAggregateRootCreated } from "./events/test-aggregate-root-created";
+import { TestDetailsRecorded } from "./events/test-details-recorded";
 import { TestEntityNameChanged } from "./events/test-entity-name-changed";
 import { TestMessageCreated } from "./events/test-message-created";
 import { TestSecretCreated } from "./events/test-secret-created";
@@ -47,6 +48,11 @@ export class TestAggregateRoot extends AggregateRoot {
   private _plain?: string;
   public get plain(): string | undefined {
     return this._plain;
+  }
+
+  private _details?: Record<string, unknown>;
+  public get details(): Record<string, unknown> | undefined {
+    return this._details;
   }
 
   constructor() {
@@ -100,6 +106,10 @@ export class TestAggregateRoot extends AggregateRoot {
       this._secret = e.secret;
       this._plain = e.plain;
     });
+
+    this.register(TestDetailsRecorded.eventType, (e: TestDetailsRecorded) => {
+      this._details = e.details;
+    });
   }
 
   public static factory = (): TestAggregateRoot => {
@@ -150,6 +160,10 @@ export class TestAggregateRoot extends AggregateRoot {
 
   public createSecret = (secret?: string, plain?: string) => {
     this.applyChange(new TestSecretCreated(this.id, secret, plain));
+  };
+
+  public recordDetails = (details: Record<string, unknown>) => {
+    this.applyChange(new TestDetailsRecorded(this.id, details));
   };
 
   public changeNameTestEntity = (id: string, name: string) => {

@@ -1,10 +1,13 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  TransactionCanceledException,
+} from "@aws-sdk/client-dynamodb";
 import { v4 } from "uuid";
 
 import { Repository } from "../../src";
 import { isEncrypted } from "../../src/aggregate/encryption";
 
-import { TestAggregateRoot } from "../test-objects";
+import { LocalEventTable, TestAggregateRoot } from "../test-objects";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -12,17 +15,6 @@ import {
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
-
-const config = {
-  convertEmptyValues: true,
-  endpoint: "http://localhost:8000",
-  sslEnabled: false,
-  region: "local-env",
-  credentials: {
-    accessKeyId: "fakeMyKeyId",
-    secretAccessKey: "fakeSecretAccessKey",
-  },
-};
 
 Logger.initialize({ level: LogLevel.INFO });
 
@@ -64,10 +56,10 @@ describe("Repository Tests", () => {
     }
 
     // act
-    // read items from db and ensure we have LastEvaluatedKey as this
-    // indicates we have more that one page of results
+    // read the first page of items from db, to show that it stops part-way
+    // through the events
     const dc = DynamoDBDocumentClient.from(ddbc);
-    const { LastEvaluatedKey } = await dc.send(
+    const { Items, LastEvaluatedKey } = await dc.send(
       new QueryCommand({
         TableName: "test-service-event-dev",
         KeyConditionExpression: "aggregateId = :aggregateId",
@@ -81,9 +73,29 @@ describe("Repository Tests", () => {
     const x = await repo.readAsync(id);
 
     // assert
-    expect(LastEvaluatedKey).not.toBeNull();
-    expect(x).not.toBeNull();
+    // there are 20001 events (the first created the ar) and the first page does
+    // not hold them all, so the repo can only have read the rest from later pages
+    const firstPage = Items!.length;
+    expect(firstPage).toBeLessThan(20001);
+    expect(LastEvaluatedKey).toEqual({
+      aggregateId: id,
+      aggregateVersion: firstPage - 1,
+    });
+    expect(x?.getExpectedVersion()).toBe(20001);
     expect(x?.name).toBe("20000");
+  });
+
+  it("should return undefined when nothing has been written for the id", async () => {
+    // arrange
+    const { repo } = setupRepoAndDynamoDB();
+
+    // act
+    const withoutKey = await repo.readAsync(v4());
+    const withKey = await repo.readAsync(v4(), "key");
+
+    // assert
+    expect(withoutKey).toBeUndefined();
+    expect(withKey).toBeUndefined();
   });
 
   it("should write events to correct event table", async () => {
@@ -331,26 +343,76 @@ describe("Repository Tests", () => {
   // somewhere, we cannot over write the current changes with the stale ones.
   it("should fail if the expected version does not match that of the AggregateRoot we are saving", async () => {
     // arrange
-    const { id, repo } = await setupAndExecuteAsync(false);
+    const { id, name, repo, table } = await setupAndExecuteAsync(false);
+
+    // read back two copies of the ar
+    const ar1 = (await repo.readAsync(id))!;
+    const ar2 = (await repo.readAsync(id))!;
+
+    // make a change to both of them
+    ar1.changeName("ar1");
+    ar2.changeName("ar2");
 
     // act
-    // read back two copies of the ar
-    const ar1 = await repo.readAsync(id);
-    const ar2 = await repo.readAsync(id);
+    // save the first, then the second
+    await repo.writeAsync(ar1);
+    const error = await repo.writeAsync(ar2).catch((e) => e);
 
-    if (ar1 && ar2) {
-      // make a change to both of them
-      ar1.changeName("ar1");
-      ar2.changeName("ar2");
+    // assert
+    // the second fails with the error from dynamo
+    expect(error).toBeInstanceOf(TransactionCanceledException);
+    expect(error.name).toBe("TransactionCanceledException");
+    expect(error.CancellationReasons).toMatchObject([
+      { Code: "ConditionalCheckFailed" },
+    ]);
 
-      // save the first
-      await repo.writeAsync(ar1);
+    // it keeps its uncommitted change, at the version it was read at
+    expect(ar2.getChanges()).toMatchObject([
+      { eventType: "TestAggregateRootNameChanged", name: "ar2" },
+    ]);
+    expect(ar2.getExpectedVersion()).toBe(1);
+
+    // and nothing it tried to write was stored
+    const items = await table.itemsAsync(id);
+    expect(items).toMatchObject([
+      { aggregateVersion: { N: "0" }, data: { M: { name: { S: name } } } },
+      { aggregateVersion: { N: "1" }, data: { M: { name: { S: "ar1" } } } },
+    ]);
+  });
+
+  it.each([1, 2, 3])(
+    "should store none of events 1 to 3 when version %i already exists",
+    async (takenVersion) => {
+      // arrange
+      const { id, repo, table } = await setupAndExecuteAsync(false);
+      const ar = (await repo.readAsync(id))!;
+      ar.changeName("event 1");
+      ar.changeName("event 2");
+      ar.changeName("event 3");
+
+      const [created] = await table.itemsAsync(id);
+      await table.putAsync({
+        ...created,
+        aggregateVersion: { N: `${takenVersion}` },
+      });
+      const before = await table.itemsAsync(id);
+
+      // act
+      const error = await repo.writeAsync(ar).catch((e) => e);
 
       // assert
-      // save the second and expect it to fail
-      await expect(repo.writeAsync(ar2)).rejects.toThrow();
+      // one reason per event: only the taken version is at fault
+      expect(error).toBeInstanceOf(TransactionCanceledException);
+      expect(error.CancellationReasons).toMatchObject(
+        [1, 2, 3].map((version) => ({
+          Code: version === takenVersion ? "ConditionalCheckFailed" : "None",
+        }))
+      );
+      expect(await table.itemsAsync(id)).toEqual(before);
+      expect(ar.getChanges()).toHaveLength(3);
+      expect(ar.getExpectedVersion()).toBe(1);
     }
-  });
+  );
 
   it("should not throw when encrypting an event with an absent allow-listed field", async () => {
     // arrange
@@ -449,17 +511,131 @@ describe("Repository Tests", () => {
       fail("AggregateRoot not found in database.");
     }
   });
+
+  it("should store a plain event with exactly these attributes and types, dropping undefined values", async () => {
+    // arrange
+    const id = v4();
+    const { repo, table } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.recordDetails({
+      text: "text",
+      emptyText: "",
+      whole: 3,
+      fraction: 1.5,
+      yes: true,
+      nothing: null,
+      list: ["a", undefined, 1],
+      emptyList: [],
+      map: { kept: "kept", dropped: undefined },
+      emptyMap: {},
+      dropped: undefined,
+    });
+    const { timestamp } = ar.getChanges()[1];
+
+    // act
+    await repo.writeAsync(ar);
+    const items = await table.itemsAsync(id);
+
+    // assert
+    // there is no encryptedProps attribute, because the event declares none
+    expect(items[1]).toStrictEqual({
+      aggregateId: { S: id },
+      aggregateVersion: { N: "1" },
+      eventType: { S: "TestDetailsRecorded" },
+      timestamp: { S: timestamp },
+      data: {
+        M: {
+          id: { S: id },
+          details: {
+            M: {
+              text: { S: "text" },
+              emptyText: { S: "" },
+              whole: { N: "3" },
+              fraction: { N: "1.5" },
+              yes: { BOOL: true },
+              nothing: { NULL: true },
+              list: { L: [{ S: "a" }, { N: "1" }] },
+              emptyList: { L: [] },
+              map: { M: { kept: { S: "kept" } } },
+              emptyMap: { M: {} },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("should store an encrypted event with exactly these attributes and types, dropping undefined values", async () => {
+    // arrange
+    const id = v4();
+    const { repo, table } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createMessage("secret message text"); // imageUrl is undefined
+    const { timestamp } = ar.getChanges()[1];
+
+    // act
+    await repo.writeAsync(ar, "key");
+    const items = await table.itemsAsync(id);
+
+    // assert
+    // ENC1.<alg>.<keyId>.<12-byte iv>.<ciphertext>.<16-byte tag>, in base64url
+    const envelope =
+      /^ENC1\.aes-256-gcm\.[\w-]{12}\.[\w-]{16}\.[\w-]+\.[\w-]{22}$/;
+    expect(items[1]).toStrictEqual({
+      aggregateId: { S: id },
+      aggregateVersion: { N: "1" },
+      eventType: { S: "TestMessageCreated" },
+      timestamp: { S: timestamp },
+      encryptedProps: { L: [{ S: "text" }, { S: "imageUrl" }] },
+      data: {
+        M: {
+          id: { S: id },
+          text: { S: expect.stringMatching(envelope) },
+        },
+      },
+    });
+  });
+
+  it("should number aggregateVersion contiguously from the expected version", async () => {
+    // arrange
+    const id = v4();
+    const { repo, table } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "event 0");
+    ar.changeName("event 1");
+    ar.changeName("event 2");
+
+    // act
+    // write the new ar, write to it again, then write to a copy read back
+    await repo.writeAsync(ar);
+    ar.changeName("event 3");
+    ar.changeName("event 4");
+    await repo.writeAsync(ar);
+    const readAr = (await repo.readAsync(id))!;
+    readAr.changeName("event 5");
+    await repo.writeAsync(readAr);
+
+    // assert
+    expect(await table.itemsAsync(id)).toMatchObject(
+      [0, 1, 2, 3, 4, 5].map((version) => ({
+        aggregateVersion: { N: `${version}` },
+        data: { M: { name: { S: `event ${version}` } } },
+      }))
+    );
+    expect(readAr.getExpectedVersion()).toBe(6);
+  });
 });
 
 // helper methods
 const setupRepoAndDynamoDB = (): {
   ddbc: DynamoDBClient;
   repo: Repository<TestAggregateRoot>;
+  table: LocalEventTable;
 } => {
-  const ddbc = new DynamoDBClient(config);
+  const table = new LocalEventTable();
+  const ddbc = table.client;
 
   const repo = new Repository<TestAggregateRoot>(
-    "test-service-event-dev",
+    table.name,
     TestAggregateRoot.factory,
     ddbc
     //true
@@ -468,6 +644,7 @@ const setupRepoAndDynamoDB = (): {
   return {
     ddbc,
     repo,
+    table,
   };
 };
 
@@ -480,12 +657,13 @@ const setupAndExecuteAsync = async (
   key: string;
   ddbc: DynamoDBClient;
   repo: Repository<TestAggregateRoot>;
+  table: LocalEventTable;
 }> => {
   const id = v4();
   const name = "New AR";
   const key = "key";
 
-  const { ddbc, repo } = setupRepoAndDynamoDB();
+  const { ddbc, repo, table } = setupRepoAndDynamoDB();
 
   const ar = TestAggregateRoot.create(id, name);
 
@@ -498,5 +676,6 @@ const setupAndExecuteAsync = async (
     key,
     ddbc,
     repo,
+    table,
   };
 };
