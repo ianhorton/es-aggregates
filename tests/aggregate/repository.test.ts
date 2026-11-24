@@ -5,7 +5,7 @@ import {
 import { v4 } from "uuid";
 
 import { Repository } from "../../src";
-import { isEncrypted } from "../../src/aggregate/encryption";
+import { encrypt, isEncrypted } from "../../src/aggregate/encryption";
 
 import { LocalEventTable, TestAggregateRoot } from "../test-objects";
 import {
@@ -243,6 +243,39 @@ describe("Repository Tests", () => {
 
     // assert
     expect(readAr?.plain).toBe(envelopeShaped); // out of scope -> untouched
+    expect(readAr?.secret).toBe("real-secret"); // in scope -> decrypts
+  });
+
+  it("does not decrypt a REAL envelope in a field the row does not list (scope)", async () => {
+    // arrange
+    // The envelope in (a) is fake: it comes back untouched even if every field is
+    // decrypted. This one is made with the key that reads it, so it would decrypt.
+    const id = v4();
+    const key = "key";
+    const envelope = encrypt("must not be decrypted", key);
+    const { repo, table } = setupRepoAndDynamoDB();
+    const ar = TestAggregateRoot.create(id, "ar");
+    ar.createSecret("real-secret", envelope); // this row lists secret, not plain
+    ar.changeName(envelope); // this row lists nothing (the first row lists name)
+
+    // act
+    await repo.writeAsync(ar, key);
+    const items = await table.itemsAsync(id);
+    const readAr = await repo.readAsync(id, key);
+
+    // assert
+    expect(items).toMatchObject([
+      { encryptedProps: { L: [{ S: "name" }] } },
+      {
+        encryptedProps: { L: [{ S: "secret" }] },
+        data: { M: { plain: { S: envelope } } },
+      },
+      { data: { M: { name: { S: envelope } } } },
+    ]);
+    expect(items[2]).not.toHaveProperty("encryptedProps");
+
+    expect(readAr?.plain).toBe(envelope); // out of scope -> untouched
+    expect(readAr?.name).toBe(envelope); // out of scope -> untouched
     expect(readAr?.secret).toBe("real-secret"); // in scope -> decrypts
   });
 
