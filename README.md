@@ -197,8 +197,7 @@ yarn install
 
 - `yarn test` - Run the test suite
 - `yarn build` - Build the project
-- `yarn version --patch` - Create a new patch version
-- `npm publish` - Publish to npm
+- `yarn version --patch` (in `packages/core`) - Create a new patch version
 
 ### Testing
 

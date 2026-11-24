@@ -6,35 +6,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns with DynamoDB integration, following Domain-Driven Design (DDD) principles. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
 
+The repository is a Yarn 1 workspace: the library is in `packages/core` (`@es-aggregates/core`), and dev tooling that all packages share is at the root.
+
 ## Key Commands
 
 ### Development
-- `yarn test` - Run the test suite with Jest (uses `--runInBand --detectOpenHandles --forceExit`)
-- `yarn build` - Build the project (runs clean → tsc)
-- `yarn clean` - Remove dist, coverage, and tsconfig build info
+Run these at the root; they cover every package.
+- `yarn test` - Run each package's test suite with Jest, one package at a time (uses `--runInBand --detectOpenHandles --forceExit`). Runs `tsc -b` first, so that no package is tested against an old build of another package
+- `yarn build` - Build every package, in dependency order (runs clean → `tsc -b`). A new package needs an entry in `references` in the root `tsconfig.json`
+- `yarn clean` - Remove dist, coverage, and tsconfig build info from every package
 
 ### Testing
-- Tests are located in the `tests/` directory mirroring the `src/` structure
+- Tests are located in each package's `tests/` directory mirroring its `src/` structure
 - Uses Jest with DynamoDB integration (`@shelf/jest-dynamodb`)
-- Test configuration in `jest.config.js` and `jest-dynamodb-config.js`
+- Test configuration in `packages/core/jest.config.js` and `packages/core/jest-dynamodb-config.js`
+- `yarn workspace @es-aggregates/core test` - Run one package's tests
 
 ### Publishing & Release
-- `yarn version --patch` - Creates new patch version (runs tests first)
+- `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)
 - Releases are automated via GitHub Actions (see `.github/workflows/release.yml`)
 - Use GitHub Actions "Release" workflow to create releases with proper semver versioning
 - Supports patch, minor, major, and prerelease version bumps
+- The Release workflow does not support workspaces yet. Until it does, the root `package.json` must have no version, so that the workflow stops before it tags anything, and the packages are `private`, so that they cannot be published
 
 ## Architecture
 
 ### Core Components
 
-**AggregateRoot** (`src/aggregate/aggregate-root.ts`)
+**AggregateRoot** (`packages/core/src/aggregate/aggregate-root.ts`)
 - Abstract base class for domain aggregates
 - Manages event recording and routing internally
 - Tracks expected version for optimistic concurrency
 - Uses EventRecorder for change tracking and EventRouter for event handling
 
-**Repository** (`src/aggregate/repository.ts`)  
+**Repository** (`packages/core/src/aggregate/repository.ts`)  
 - Generic repository implementation for DynamoDB persistence
 - Handles event sourcing read/write operations
 - Supports optional field-level encryption
