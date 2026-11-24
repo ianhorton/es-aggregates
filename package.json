@@ -5,6 +5,7 @@
     "packages/*"
   ],
   "scripts": {
+    "postinstall": "node scripts/check-lockfile.js",
     "prepare": "yarn build",
     "build": "run-s clean build:tsc",
     "build:tsc": "tsc -b",
