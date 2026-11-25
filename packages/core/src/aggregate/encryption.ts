@@ -100,6 +100,8 @@ function encrypt(data: string, key: string): string {
   ].join(DELIMITER);
 }
 
+// A read logs the messages of the errors that this throws. So they must have no part of the
+// value in them, nor of the key.
 function decrypt(value: string, key: string): string {
   const parts = value.split(DELIMITER);
   if (parts.length !== ENVELOPE_PARTS || parts[0] !== ENVELOPE_VERSION) {
@@ -108,7 +110,7 @@ function decrypt(value: string, key: string): string {
 
   const [, alg, , ivPart, ciphertextPart, tagPart] = parts;
   if (alg !== ALGORITHM) {
-    throw new Error(`Unsupported envelope algorithm: ${alg}`);
+    throw new Error("Unsupported envelope algorithm");
   }
 
   // With authTagLength, setAuthTag throws if the tag has any other length. Without
