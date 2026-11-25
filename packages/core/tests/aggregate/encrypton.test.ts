@@ -1,4 +1,9 @@
+import { TestAggregateRoot } from "@es-aggregates/store-tests";
+
+import { Repository } from "../../src";
 import { decrypt, encrypt, isEncrypted } from "../../src/aggregate/encryption";
+
+import { InMemoryEventStore } from "../test-objects/in-memory-event-store";
 
 const key = "key";
 const value = "hello world";
@@ -77,6 +82,75 @@ describe("Encryption Tests (v2 envelope)", () => {
     expect(() => decrypt("just plaintext", key)).toThrow(
       "Not a recognised encryption envelope"
     );
+  });
+
+  describe("length of the tag", () => {
+    // the envelope with its tag cut to that many bytes, or filled up to them with zeros
+    const withTagOf = (length: number, envelope: string): string => {
+      const parts = envelope.split(".");
+      const tag = Buffer.alloc(length);
+      Buffer.from(parts[5], "base64url").copy(tag);
+      return [...parts.slice(0, 5), tag.toString("base64url")].join(".");
+    };
+
+    describe.each([
+      ["a value", value],
+      ["the EMPTY string", ""],
+    ])("of %s", (_, plaintext) => {
+      it("decrypts with the full tag, which has 16 bytes", () => {
+        const encrypted = encrypt(plaintext, key);
+
+        expect(withTagOf(16, encrypted)).toBe(encrypted);
+        expect(decrypt(encrypted, key)).toBe(plaintext);
+      });
+
+      it.each([4, 8, 12, 15, 17, 32])(
+        "fails to decrypt with a tag of %i bytes",
+        (length) => {
+          const altered = withTagOf(length, encrypt(plaintext, key));
+
+          expect(() => decrypt(altered, key)).toThrow(
+            `Invalid authentication tag length: ${length}`
+          );
+        }
+      );
+    });
+
+    describe("through Repository", () => {
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it.each([4, 8, 12, 15])(
+        "leaves a value with a tag of %i bytes as it is, and logs it",
+        async (length) => {
+          // arrange
+          const store = new InMemoryEventStore();
+          const repo = new Repository(store, TestAggregateRoot.factory);
+          const ar = TestAggregateRoot.create("aggregate id", "name");
+          ar.createMessage("text", "https://example.com/image.png");
+          await repo.writeAsync(ar, key);
+
+          const [created, message] = await store.readAsync(ar.id);
+          const shortened = withTagOf(length, message.data.text);
+          message.data.text = shortened;
+          jest.spyOn(store, "readAsync").mockResolvedValue([created, message]);
+          const log = jest.spyOn(console, "error").mockImplementation(() => {});
+
+          // act
+          const readAr = (await repo.readAsync(ar.id, key))!;
+
+          // assert: the other values are decrypted as usual
+          expect(readAr.state).toEqual({ ...ar.state, messageText: shortened });
+          expect(log.mock.calls).toEqual([
+            [expect.stringContaining('Failed to decrypt PII field "text"')],
+          ]);
+          expect(log.mock.calls[0][0]).toContain(
+            `Invalid authentication tag length: ${length}.`
+          );
+        }
+      );
+    });
   });
 
   describe("isEncrypted", () => {

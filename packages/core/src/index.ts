@@ -4,6 +4,7 @@ export * from "./aggregate/encryption";
 export * from "./event/event-base";
 export * from "./aggregate/repository";
 export * from "./event/models/event";
+export * from "./event/models/encrypted-props";
 
 export * from "./event/event-router";
 export * from "./event/models/persisted-event";

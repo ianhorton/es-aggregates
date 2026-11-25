@@ -1,7 +1,7 @@
-import { Consumer } from "./test-objects/consumer";
+import { Consumer } from "@es-aggregates/store-tests/src/consumer";
 
 describe("Apps that use the package", () => {
-  const consumer = new Consumer();
+  const consumer = new Consumer("cosmos");
 
   const app = `
     import { CosmosClient } from "@azure/cosmos";

@@ -4,9 +4,8 @@ import { IEvent } from "../event/models/event";
 import { IPersistedEvent } from "../event/models/persisted-event";
 import { EventStore } from "../store/event-store";
 import { AggregateRoot } from "./aggregate-root";
+import { EncryptedPropsCheck } from "./encrypted-props-check";
 import { decrypt, encrypt, isEncrypted } from "./encryption";
-
-const logger = new Logger("repository");
 
 export interface IRepository<T extends AggregateRoot> {
   readonly readAsync: (
@@ -18,12 +17,20 @@ export interface IRepository<T extends AggregateRoot> {
 }
 
 export class Repository<T extends AggregateRoot> implements IRepository<T> {
+  // For ids, event types, versions and counts only. The values of events must not get into
+  // the logs, so never give it data, a key, or an error, which can have values in it. It is
+  // not called logger, because a subclass may have one of its own.
+  private readonly debugLogger: Logger;
+
   constructor(
     private readonly store: EventStore,
     private readonly activator: () => T,
     readonly debug: boolean = false
   ) {
-    logger.level = debug ? LogLevel.DEBUG : LogLevel.NONE;
+    this.debugLogger = new Logger({
+      module: "repository",
+      level: debug ? LogLevel.DEBUG : LogLevel.NONE,
+    });
   }
 
   public readAsync = async (
@@ -43,15 +50,20 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
 
   public writeAsync = async (aggregate: T, encryptionKey?: string): Promise<void> => {
     const changes = aggregate.getChanges();
-    logger.debug("Changes.", changes);
 
     if (changes.length === 0) {
-      logger.debug("No changes to write for aggregate.", aggregate.id);
+      this.debugLogger.debug("No changes to write.", {
+        aggregateId: aggregate.id,
+      });
       return;
     }
 
     const expectedVersion = aggregate.getExpectedVersion();
-    logger.debug("Expected Version.", expectedVersion);
+    this.debugLogger.debug("Writing changes.", {
+      aggregateId: aggregate.id,
+      expectedVersion,
+      eventTypes: changes.map(({ eventType }) => eventType),
+    });
 
     await this.appendEventsAsync(
       aggregate.id,
@@ -185,6 +197,11 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       };
 
       persistedEvents.push(persistedEvent);
+
+      // without a key, encryption is off, so there is nothing to warn about
+      if (encryptionKey !== undefined) {
+        new EncryptedPropsCheck(event, persistedEvent).warn();
+      }
     }
 
     await this.store.appendAsync(aggregateId, persistedEvents, expectedVersion);
@@ -195,7 +212,13 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     encryptionKey?: string
   ): Promise<IEvent[]> => {
     const items = await this.store.readAsync(aggregateId);
-    logger.debug("All Items.", items);
+    this.debugLogger.debug("Read items.", {
+      aggregateId,
+      items: items.map(({ aggregateVersion, eventType }) => ({
+        aggregateVersion,
+        eventType,
+      })),
+    });
 
     if (items.length > 0) {
       const events = items.map(

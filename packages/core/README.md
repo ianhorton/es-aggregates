@@ -50,7 +50,7 @@ export class UserRenamed extends EventBase {
 - `eventType` is stored with each event, and it finds the handler when the event is read. So once there are stored events, do not change it.
 - The event's other properties are its data. Use strings, numbers, booleans, `null`, arrays and plain objects. What else can be stored depends on the store. `undefined` is not stored.
 - `timestamp` is when the event was made, in ISO 8601 and in UTC. The order of events comes from their versions, not from it. In a time zone that has daylight saving time, an event made in the hour that is repeated when the clocks go back can have a timestamp that is up to an hour wrong. If that matters, run in UTC (`TZ=UTC`).
-- The older form, `super("UserCreated", ["name"])`, still works. It logs a warning, once for each event type.
+- The older form, `super("UserCreated", ["name"])`, still works. It logs a warning, once for each event type. A static `encryptedProps` is not used then, even if no list is passed.
 
 ## Aggregates
 
@@ -210,7 +210,7 @@ The arguments are:
 | --- | --- |
 | `store` | An `EventStore`, such as `new CosmosEventStore(container)`. For DynamoDB there is a shortcut, [`DynamoRepository`](../dynamodb/README.md) |
 | `activator` | Makes an empty aggregate, for a read to fill |
-| `debug` | `true` logs what is read and written. The default is `false` |
+| `debug` | `true` logs each read and write of this repository: ids, event types and versions, but no values. The default is `false` |
 
 - `readAsync(id, encryptionKey?)` reads all the events of the aggregate and replays them. It returns `undefined` if there are none.
 - `writeAsync(aggregate, encryptionKey?)` stores the aggregate's changes: all of them, or none. If there are none to store, it does nothing. If it fails, the aggregate still has its changes.
@@ -220,7 +220,7 @@ Take care with these:
 
 - **Wait for each write before you change the aggregate again.** A change that is made during a write is not stored. And the next write of that object then skips a version. After that, every write of that aggregate is rejected with a `ConcurrencyError`.
 - **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version, so a gap has the same effect.
-- **`debug` logs the changes before they are encrypted**, and it is one setting for the whole process: the repository that was created last decides.
+- **`debug` logs the ids of aggregates**, and the types and versions of their events. So if an id must not get into your logs, because it is an email address for example, leave `debug` off. It logs no other value of an event, and no key. Each repository has its own setting, which does not affect the others.
 
 ## ConcurrencyError and how to retry
 
@@ -288,9 +288,9 @@ The values are encrypted with AES-256-GCM. The key can be any string, but it is 
 
 **What it does not protect:**
 
-- Other properties, or a property inside an object or an array. Only the event's own properties can be listed. A name that the event does not have is ignored, so check the spelling.
+- Other properties, or a property inside an object or an array. Only the event's own properties can be listed. For a name that the event does not have, nothing is encrypted, and a write with a key logs a warning. TypeScript can [check the names](#check-what-is-encrypted) too.
 - Ids, event types, timestamps, the names of properties, and the length of each value.
-- The aggregate in memory, and what `debug` logs.
+- The aggregate in memory. `debug` logs none of its values but the id.
 - Anything against someone who can change what is stored. If they alter an encrypted value, a read notices, and treats it like one that has the wrong key. But they can replace it by plain text, or by another value that was encrypted with the same key, and that is not noticed.
 
 **Only strings are encrypted.** If a listed property has another kind of value, a write with a key is rejected, and stores nothing. `undefined` and `null` are left as they are.
@@ -310,6 +310,35 @@ The values are encrypted with AES-256-GCM. The key can be any string, but it is 
 - An encrypted value has about 70 characters more than the value, plus a third of its size. That counts towards the store's size limits.
 
 `encrypt`, `decrypt` and `isEncrypted` are exported too.
+
+### Check what is encrypted
+
+If a name in `encryptedProps` is misspelt, the value that was meant is stored as plain text. Give the list the type `EncryptedProps`, and TypeScript checks the names:
+
+```typescript
+// email-changed.ts
+import { EncryptedProps, EventBase } from "@es-aggregates/core";
+
+export class EmailChanged extends EventBase {
+  static eventType = "EmailChanged";
+  static encryptedProps: EncryptedProps<EmailChanged> = ["email"];
+
+  constructor(readonly email: string) {
+    super();
+  }
+}
+```
+
+Then a name that is not a public property of the event, such as `"emial"` or `"address.city"`, does not compile. Nor does one whose value can be something other than a string, `null` or `undefined`, such as a number. Nor do `"eventType"`, `"timestamp"` and `"encryptedProps"`, which are never encrypted.
+
+A write with a key also logs a warning, with `console.warn`, in these two cases. The event is stored all the same.
+
+- **The event does not have a property that its `encryptedProps` lists.** Nothing is encrypted for that name, so correct it. If the property is optional, you can ignore the warning. There is none if the event has the property, but it is `undefined`, as after `constructor(readonly email?: string)`.
+- **The event has no `encryptedProps`, although its class declares `static encryptedProps`.** Nothing of the event is encrypted. The static list is not used if the constructor passes the event's type to `super`, as in `super("EmailChanged")`. So declare `static eventType` too, and call `super()`. If you pass no list on purpose, to switch encryption off, you can ignore the warning.
+
+Each is logged once per process: the first for each event type and name, and the second for each event type. They have no values in them. A write without a key does not log them.
+
+Events that are already stored stay as they are when you correct the class.
 
 ## EventStore
 
