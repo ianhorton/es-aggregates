@@ -1,5 +1,7 @@
 # Release Process
 
+> **Do not run the Release workflow.** It does not support the package layout (`packages/`) yet, and must not be run until it does.
+
 This repository uses GitHub Actions for automated releases following semantic versioning (semver).
 
 ## How to Release

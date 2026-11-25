@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns, following Domain-Driven Design (DDD) principles. It stores events in DynamoDB or Cosmos DB, or in any other database for which there is an `EventStore`. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
 
+The documentation for users is in `README.md`, in the `README.md` of each published package, and in `docs/migrating-from-1.x.md`. Keep it true when behaviour changes, and check that its code samples compile.
+
 The repository is a Yarn 1 workspace, and dev tooling that all packages share is at the root. The packages are:
 - `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
 - `packages/cosmos` (`@es-aggregates/cosmos`) - Stores events in Cosmos DB for NoSQL. Its SDK (`@azure/cosmos`) and core are its peer dependencies
@@ -31,9 +33,9 @@ Run these at the root; they cover every package.
 ### Publishing & Release
 - `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)
 - Releases are automated via GitHub Actions (see `.github/workflows/release.yml`)
-- Use GitHub Actions "Release" workflow to create releases with proper semver versioning
+- Use GitHub Actions "Release" workflow to create releases with proper semver versioning (see `.github/RELEASE.md`)
 - Supports patch, minor, major, and prerelease version bumps
-- The Release workflow does not support workspaces yet. Until it does, the root `package.json` must have no version, so that the workflow stops before it tags anything, and the packages are `private`, so that they cannot be published
+- The Release workflow does not support workspaces yet, and must not be run until it does. Until then, the root `package.json` must have no version, so that the workflow stops before it tags anything, and the packages are `private`, so that they cannot be published
 
 ## Architecture
 
@@ -82,7 +84,7 @@ Events are stored as items with:
 - Only values that JSON can hold. Others are refused, so that what is read is what was appended
 
 ### Key Patterns
-- Aggregates register event handlers in constructor using `this.register(EventType.typename, handler)`
+- Aggregates register event handlers in constructor using `this.register(SomeEvent.eventType, handler)`. Events declare `static eventType`; passing the type to `super` is deprecated
 - Domain changes use `this.applyChange(event)` to both apply and record events
 - Repository uses activator pattern - requires factory function that returns new aggregate instance
 - Optimistic concurrency control via version checking
@@ -98,7 +100,7 @@ Events are stored as items with:
 - **release.yml**: Manual workflow for semantic versioning and publishing
 - Supports patch, minor, major, and prerelease version bumps
 - Creates git tags, GitHub releases, and publishes to npm
-- Requires `NPM_TOKEN` secret for publishing
+- Publishes with OIDC Trusted Publishing, so it needs no `NPM_TOKEN` secret
 ## OO-First Principle
 
 **Business logic belongs with the object it operates on — as a method on the class — not in free-floating helper functions beside it.**
