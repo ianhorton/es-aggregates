@@ -39,6 +39,7 @@
     "@es-aggregates/core": "*",
     "@es-aggregates/store-tests": "*",
     "@sailplane/logger": "^4.2.0",
+    "es-aggregates-1": "npm:es-aggregates@1.1.1",
     "uuid": "^8.3.2"
   }
 }

@@ -2317,6 +2317,19 @@ es-abstract@^1.22.1:
     unbox-primitive "^1.0.2"
     which-typed-array "^1.1.13"
 
+"es-aggregates-1@npm:es-aggregates@1.1.1":
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/es-aggregates/-/es-aggregates-1.1.1.tgz#9d84842e3d18a355c9dd767ce5fd43d2ab2712dd"
+  integrity sha512-il3hhSXgyFbkzBJhHCoM2IgvBOTpgg5MIYFzluuxNEw1nOOF0o1IUKTP747xAG92ZGLqrm4mOetuG/rU2b8TTA==
+  dependencies:
+    "@aws-sdk/client-dynamodb" "^3.485.0"
+    "@aws-sdk/lib-dynamodb" "^3.485.0"
+    "@aws-sdk/util-dynamodb" "^3.485.0"
+    "@sailplane/logger" "^4.2.0"
+    date-fns "^2.26.0"
+    date-fns-tz "^1.1.6"
+    uuid "^8.3.2"
+
 es-module-lexer@^2.1.0:
   version "2.3.2"
   resolved "https://registry.yarnpkg.com/es-module-lexer/-/es-module-lexer-2.3.2.tgz#311fa4f40168c1975c505477c51b23234d41ad55"

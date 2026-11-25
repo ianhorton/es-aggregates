@@ -66,6 +66,7 @@ Events are stored with:
 - `aggregateId` (HASH key)
 - `aggregateVersion` (RANGE key) 
 - Uses conditional writes to prevent version conflicts
+- Apps have events that 1.x stored, so what is stored must not change. The tests of `packages/dynamodb` compare it with the published 1.1.1
 
 ### Key Patterns
 - Aggregates register event handlers in constructor using `this.register(EventType.typename, handler)`
