@@ -23,7 +23,12 @@ const warnedConstructorArgTypes = new Set<string>();
  *   super("UserRenamed", ["displayName"]);
  *
  * When the constructor arg is provided it wins (and warns once); otherwise the
- * base falls back to the subclass's static fields.
+ * base falls back to the subclass's static fields. A type without a list, as in
+ * super("UserRenamed"), wins too: the static encryptedProps is not used then, and
+ * nothing is encrypted.
+ *
+ * To have TypeScript check the names in the list, give it the type
+ * EncryptedProps<UserRenamed>.
  */
 export abstract class EventBase implements IEvent {
   public readonly eventType: string;

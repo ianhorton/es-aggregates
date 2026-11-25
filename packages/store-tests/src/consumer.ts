@@ -2,17 +2,24 @@ import { join, resolve } from "path";
 import * as ts from "typescript";
 
 /**
- * An app that uses the package, as TypeScript sees it. The app gets the declarations that
+ * An app that uses a package, as TypeScript sees it. The app gets the declarations that
  * a build of src makes now, and not those that the last build has left.
+ *
+ * The index does not export it, because it loads TypeScript, which takes a while.
  */
 export class Consumer {
-  private static readonly root = resolve(__dirname, "../..");
+  private readonly root: string;
 
   private readonly declarations = new Map<string, string>();
 
-  constructor() {
+  /**
+   * @param folder the package's folder in packages, and its name after the scope
+   */
+  constructor(private readonly folder: string) {
+    this.root = resolve(__dirname, "../..", folder);
+
     const { options, fileNames } = ts.getParsedCommandLineOfConfigFile(
-      join(Consumer.root, "tsconfig.json"),
+      join(this.root, "tsconfig.json"),
       { emitDeclarationOnly: true },
       { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => undefined }
     )!;
@@ -32,7 +39,7 @@ export class Consumer {
     source: string,
     skipLibCheck: boolean
   ): string[] => {
-    const file = join(Consumer.root, "tests", name);
+    const file = join(this.root, "tests", name);
     const files = new Map([...this.declarations, [file, source]]);
 
     const options: ts.CompilerOptions = {
@@ -42,8 +49,8 @@ export class Consumer {
       noEmit: true,
       skipLibCheck,
       types: ["node"],
-      baseUrl: Consumer.root,
-      paths: { "@es-aggregates/cosmos": ["dist/index.d.ts"] },
+      baseUrl: this.root,
+      paths: { [`@es-aggregates/${this.folder}`]: ["dist/index.d.ts"] },
     };
     const host = ts.createCompilerHost(options);
     const { fileExists, readFile } = host;
