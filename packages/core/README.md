@@ -210,7 +210,7 @@ The arguments are:
 | --- | --- |
 | `store` | An `EventStore`, such as `new CosmosEventStore(container)`. For DynamoDB there is a shortcut, [`DynamoRepository`](../dynamodb/README.md) |
 | `activator` | Makes an empty aggregate, for a read to fill |
-| `debug` | `true` logs what is read and written. The default is `false` |
+| `debug` | `true` logs each read and write of this repository: ids, event types and versions, but no values. The default is `false` |
 
 - `readAsync(id, encryptionKey?)` reads all the events of the aggregate and replays them. It returns `undefined` if there are none.
 - `writeAsync(aggregate, encryptionKey?)` stores the aggregate's changes: all of them, or none. If there are none to store, it does nothing. If it fails, the aggregate still has its changes.
@@ -220,7 +220,7 @@ Take care with these:
 
 - **Wait for each write before you change the aggregate again.** A change that is made during a write is not stored. And the next write of that object then skips a version. After that, every write of that aggregate is rejected with a `ConcurrencyError`.
 - **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version, so a gap has the same effect.
-- **`debug` logs the changes before they are encrypted**, and it is one setting for the whole process: the repository that was created last decides.
+- **`debug` logs the ids of aggregates**, and the types and versions of their events. So if an id must not get into your logs, because it is an email address for example, leave `debug` off. It logs no other value of an event, and no key. Each repository has its own setting, which does not affect the others.
 
 ## ConcurrencyError and how to retry
 
@@ -290,7 +290,7 @@ The values are encrypted with AES-256-GCM. The key can be any string, but it is 
 
 - Other properties, or a property inside an object or an array. Only the event's own properties can be listed. A name that the event does not have is ignored, so check the spelling.
 - Ids, event types, timestamps, the names of properties, and the length of each value.
-- The aggregate in memory, and what `debug` logs.
+- The aggregate in memory. `debug` logs none of its values but the id.
 - Anything against someone who can change what is stored. If they alter an encrypted value, a read notices, and treats it like one that has the wrong key. But they can replace it by plain text, or by another value that was encrypted with the same key, and that is not noticed.
 
 **Only strings are encrypted.** If a listed property has another kind of value, a write with a key is rejected, and stores nothing. `undefined` and `null` are left as they are.
