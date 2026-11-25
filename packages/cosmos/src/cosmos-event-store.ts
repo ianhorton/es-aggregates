@@ -93,6 +93,7 @@ type Client = EventContainer["database"]["client"];
  * not. The store checks that before the first append with a CosmosClient, and remembers the
  * answer for that client, so it does not notice if the account is changed later. If the
  * account cannot be read, the append goes ahead unchecked, and the next one tries again.
+ * The first time that this happens with a client, it is logged with console.error.
  *
  * After any error but a ConcurrencyError, the events may have been stored, or not: read the
  * aggregate again before you retry. One of these errors is for an append that the SDK, by
@@ -111,6 +112,9 @@ export class CosmosEventStore implements EventStore {
 
   // for each client, whether multi-region writes are enabled for its account
   private static readonly answers = new WeakMap<Client, Promise<boolean>>();
+
+  // the clients of which a failure to read the account has been logged
+  private static readonly logged = new WeakSet<Client>();
 
   constructor(private readonly container: EventContainer) {}
 
@@ -225,8 +229,9 @@ export class CosmosEventStore implements EventStore {
 
     let answer = answers.get(client);
     if (answer === undefined) {
-      answer = this.readAccountAsync(client).catch(() => {
+      answer = this.readAccountAsync(client).catch((reason: unknown) => {
         answers.delete(client);
+        this.logUnchecked(client, reason);
         return false;
       });
       answers.set(client, answer);
@@ -235,9 +240,60 @@ export class CosmosEventStore implements EventStore {
   };
 
   private readAccountAsync = async (client: Client): Promise<boolean> => {
-    const { resource } = await client.getDatabaseAccount();
-    // if there is none, this throws too
-    return resource!.enableMultipleWritableLocations;
+    const account = (await client.getDatabaseAccount())?.resource;
+    if (!account) {
+      throw new Error("The SDK returned no account.");
+    }
+    return account.enableMultipleWritableLocations;
+  };
+
+  /**
+   * Logs that the account could not be read, but only once for each client: if that is so
+   * for good, every append would log it. This must not fail the append, whatever the reason
+   * is, and even if it cannot be logged.
+   */
+  private logUnchecked = (client: Client, reason: unknown): void => {
+    const { logged } = CosmosEventStore;
+    if (logged.has(client)) {
+      return;
+    }
+    logged.add(client);
+
+    try {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[es-aggregates] The Cosmos DB account could not be read, so appends go ahead " +
+          "unchecked: they are not refused if multi-region writes are enabled for it. " +
+          "Check that the CosmosClient may read the account, and that the account has a " +
+          "single write region. This is logged only once for each CosmosClient. " +
+          `Cause: ${this.causeOf(reason)}`
+      );
+    } catch {
+      // the append goes ahead
+    }
+  };
+
+  /**
+   * What is logged of a reason: its status code and its message, and nothing else of it,
+   * such as the request, its headers or the diagnostics. If there was no answer, its code
+   * is not a status code but a name such as ENOTFOUND, and its message names the host of
+   * the endpoint, so the message is left out.
+   */
+  private causeOf = (reason: unknown): string => {
+    const { code, message } = (reason ?? {}) as {
+      code?: unknown;
+      message?: unknown;
+    };
+    if (typeof code === "string" && code !== "") {
+      return code;
+    }
+
+    const status = typeof code === "number" ? `status code ${code}` : "";
+    const text = typeof reason === "string" ? reason : message;
+    // a message of Cosmos DB can have more than one line
+    const line =
+      typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+    return [status, line].filter((part) => part !== "").join(": ") || "unknown";
   };
 
   /**

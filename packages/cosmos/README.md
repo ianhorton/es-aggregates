@@ -107,7 +107,7 @@ export async function renameAsync(id: string, name: string): Promise<void> {
 
 An append is one transactional batch. Each event is an item. Its id is its version, as a string, so a version cannot be stored twice.
 
-In TypeScript, the constructor takes an `EventContainer`, which is exported too. It has only what the store uses, so the SDK's `Container` is one in an ES module and in CommonJS alike.
+In TypeScript, the constructor takes an `EventContainer`, which is exported too. It has only what the store uses, so the SDK's `Container` is one in an ES module and in CommonJS alike. If you pass a container of your own, such as a wrapper or a fake, it needs `database.client.getDatabaseAccount()`, to [check the account](#one-write-region), as well as `items.batch` and `items.query`.
 
 ## Consistency
 
@@ -134,7 +134,8 @@ Cosmos DB refuses a version that is already stored, but only in the region that 
 So if [multi-region writes](https://learn.microsoft.com/azure/cosmos-db/how-to-manage-database-account#configure-multiple-write-regions) are enabled for the account, an append is rejected with an `Error` that says so, and stores nothing. Reads are not refused.
 
 - The store checks this before the first append with a `CosmosClient`, and remembers the answer for that client. If you enable or disable multi-region writes later, restart the app, because the store does not notice.
-- If the account cannot be read, the append goes ahead unchecked, and the next one tries again. Before that, the SDK itself can try several times, such as for 10 seconds after a lost connection.
+- If the account cannot be read, the append goes ahead unchecked, and the next one tries again. Before that, the SDK itself can try several times, such as for 10 seconds after a lost connection. The first time that this happens with a `CosmosClient`, the store logs it with `console.error`, with the reason and what to check.
+- To read the account, a [custom data plane role](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security#required-metadata) needs the `Microsoft.DocumentDB/databaseAccounts/readMetadata` action. The built-in roles have it.
 
 ## Limits
 

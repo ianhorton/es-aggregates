@@ -50,6 +50,8 @@ export class StubbedCosmos {
     },
   };
 
+  public static readonly key = "bm90IGEgcmVhbCBrZXk=";
+
   public static startAsync = async (
     answers: Answer[],
     account?: Account
@@ -80,9 +82,9 @@ export class StubbedCosmos {
 
   public readonly container: Container;
 
-  private readonly client: CosmosClient;
+  public readonly endpoint: string;
 
-  private readonly endpoint: string;
+  private readonly client: CosmosClient;
 
   private constructor(
     private readonly answers: Answer[],
@@ -95,7 +97,7 @@ export class StubbedCosmos {
     this.endpoint = `http://127.0.0.1:${port}/`;
     this.client = new CosmosClient({
       endpoint: this.endpoint,
-      key: "bm90IGEgcmVhbCBrZXk=",
+      key: StubbedCosmos.key,
       connectionPolicy: account
         ? StubbedCosmos.sendAgain
         : StubbedCosmos.sendOnce,

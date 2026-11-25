@@ -285,13 +285,15 @@ describe("CosmosEventStore Tests", () => {
           failure(503),
           conflict
         );
-        // the account cannot be read, or else the append would be refused
+        // the account cannot be read, or else the append would be refused. That is logged
         cosmos.accountAnswers.push(failure(500));
+        const log = jest.spyOn(console, "error").mockImplementation(() => {});
 
         // act
         const error = await appendAndCatchAsync(store);
 
         // assert
+        log.mockRestore();
         expectUnknown(error, cosmos.outcomes[0]);
         expect(error.cause.code).toBe(207);
         expect(cosmos.requests.map(({ path }) => path)).toEqual([
@@ -619,6 +621,24 @@ describe("CosmosEventStore Tests", () => {
     });
 
     describe("when it checks the account", () => {
+      // each test here that cannot read the account logs a line
+      let log: jest.SpyInstance;
+
+      beforeEach(() => {
+        log = jest.spyOn(console, "error").mockImplementation(() => {});
+      });
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      const lineWith = (cause: string): string =>
+        "[es-aggregates] The Cosmos DB account could not be read, so appends go ahead " +
+        "unchecked: they are not refused if multi-region writes are enabled for it. " +
+        "Check that the CosmosClient may read the account, and that the account has a " +
+        "single write region. This is logged only once for each CosmosClient. " +
+        `Cause: ${cause}`;
+
       const expectRefused = (error: any): void => {
         expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
         expect(error.message).toBe(
@@ -649,6 +669,7 @@ describe("CosmosEventStore Tests", () => {
         await expect(store.appendAsync(id, events, 7)).resolves.toBeUndefined();
         expect(cosmos.accountRequests).toBe(1);
         expect(cosmos.requests).toHaveLength(1);
+        expect(log).not.toHaveBeenCalled();
       });
 
       it("should send nothing when multi-region writes are enabled", async () => {
@@ -663,6 +684,7 @@ describe("CosmosEventStore Tests", () => {
         expectRefused(error);
         expect(cosmos.accountRequests).toBe(1);
         expect(cosmos.requests).toHaveLength(0);
+        expect(log).not.toHaveBeenCalled();
       });
 
       it("should send nothing when the SDK knows of two write regions", async () => {
@@ -678,6 +700,7 @@ describe("CosmosEventStore Tests", () => {
         // assert
         expectRefused(error);
         expect(cosmos.requests).toHaveLength(0);
+        expect(log).not.toHaveBeenCalled();
       });
 
       it("should ask for the account only once for a client", async () => {
@@ -758,51 +781,132 @@ describe("CosmosEventStore Tests", () => {
         expect(other.requests).toHaveLength(0);
       });
 
-      it.each<[string, Answer]>([
-        ["a 401", { status: 401, body: { message: "The key is wrong." } }],
-        ["a 403", { status: 403, body: { message: "It is not allowed." } }],
-        ["a 404", { status: 404, body: { message: "There is none." } }],
-        ["a 429", { status: 429, body: { message: "There is too much." } }],
-        ["a 500", { status: 500, body: { message: "It broke." } }],
-        ["a 500 that is empty", { status: 500 }],
-        ["a 503", { status: 503, body: { message: "It is down." } }],
-        ["a 200 that is empty", { status: 200 }],
+      // what the SDK itself throws, if an answer has no body, is in its own words
+      const anyCause = expect.stringMatching(/ Cause: \S/);
+
+      it.each<[string, Answer, unknown]>([
+        [
+          "a 401",
+          { status: 401, body: { message: "The key is wrong." } },
+          lineWith("status code 401: The key is wrong."),
+        ],
+        [
+          "a 403",
+          { status: 403, body: { message: "It is not allowed." } },
+          lineWith("status code 403: It is not allowed."),
+        ],
+        [
+          "a 404",
+          { status: 404, body: { message: "There is none." } },
+          lineWith("status code 404: There is none."),
+        ],
+        [
+          "a 429",
+          { status: 429, body: { message: "There is too much." } },
+          lineWith("status code 429: There is too much."),
+        ],
+        [
+          "a 500",
+          { status: 500, body: { message: "It broke." } },
+          lineWith("status code 500: It broke."),
+        ],
+        [
+          "a 500 without a message",
+          { status: 500, body: {} },
+          lineWith("status code 500"),
+        ],
+        ["a 500 that is empty", { status: 500 }, anyCause],
+        [
+          "a 503",
+          { status: 503, body: { message: "It is down." } },
+          lineWith("status code 503: It is down."),
+        ],
+        ["a 200 that is empty", { status: 200 }, anyCause],
+        [
+          "a message on more than one line",
+          {
+            status: 403,
+            body: { message: "It is not allowed.\r\nActivityId: 1,\n  2.0 " },
+          },
+          lineWith("status code 403: It is not allowed. ActivityId: 1, 2.0"),
+        ],
       ])(
-        "should append, and ask again the next time, when the answer is %s",
-        async (_, answer) => {
+        "should append, log it only the first time, and ask again the next time, when the answer is %s",
+        async (_, answer, line) => {
           // arrange
           const { store } = await setupAsync(stored, stored, stored, stored);
           cosmos.accountAnswers.push(answer, answer, accountWith(false));
 
           // act
           const asked: number[] = [];
+          const logged: number[] = [];
           for (let count = 1; count <= 4; count++) {
             await store.appendAsync(id, events, 7);
             asked.push(cosmos.accountRequests);
+            logged.push(log.mock.calls.length);
           }
 
           // assert
           expect(asked).toEqual([1, 2, 3, 3]);
+          expect(logged).toEqual([1, 1, 1, 1]);
+          expect(log.mock.calls).toEqual([[line]]);
           expect(cosmos.requests).toHaveLength(4);
         }
       );
 
       // without a response, the SDK rejects, but only after 10 seconds. The others are what
       // it would not do
-      it.each<[string, () => any]>([
-        ["rejects", () => Promise.reject(new Error("socket hang up"))],
-        ["rejects with undefined", () => Promise.reject(undefined)],
+      it.each<[string, () => any, string]>([
+        [
+          "rejects",
+          () => Promise.reject(new Error("socket hang up")),
+          "socket hang up",
+        ],
+        ["rejects with undefined", () => Promise.reject(undefined), "unknown"],
+        ["rejects with null", () => Promise.reject(null), "unknown"],
+        [
+          "rejects with a string",
+          () => Promise.reject("It broke."),
+          "It broke.",
+        ],
+        ["rejects with a number", () => Promise.reject(7), "unknown"],
+        ["rejects with an object", () => Promise.reject({}), "unknown"],
+        [
+          "rejects with an object that has no prototype",
+          () => Promise.reject(Object.create(null)),
+          "unknown",
+        ],
+        [
+          "rejects with an object that has a status code, but no message",
+          () => Promise.reject({ code: 403 }),
+          "status code 403",
+        ],
+        [
+          "rejects with a message that is not a string",
+          () => Promise.reject({ code: 403, message: { text: "It broke." } }),
+          "status code 403",
+        ],
+        [
+          "rejects with an empty message",
+          () => Promise.reject(new Error("")),
+          "unknown",
+        ],
         [
           "throws",
           () => {
             throw new Error("from the SDK");
           },
+          "from the SDK",
         ],
-        ["returns undefined", () => undefined],
-        ["returns no account", () => Promise.resolve({ resource: undefined })],
+        ["returns undefined", () => undefined, "The SDK returned no account."],
+        [
+          "returns no account",
+          () => Promise.resolve({ resource: undefined }),
+          "The SDK returned no account.",
+        ],
       ])(
-        "should append, and ask again the next time, when the SDK %s",
-        async (_, getDatabaseAccount) => {
+        "should append, log it, and ask again the next time, when the SDK %s",
+        async (_, getDatabaseAccount, cause) => {
           // arrange
           const { container, store } = await setupAsync(stored);
           jest
@@ -817,6 +921,7 @@ describe("CosmosEventStore Tests", () => {
           // assert
           expect(result).toBeUndefined();
           expectRefused(nextResult);
+          expect(log.mock.calls).toEqual([[lineWith(cause)]]);
           expect(cosmos.requests).toHaveLength(1);
         }
       );
@@ -840,6 +945,123 @@ describe("CosmosEventStore Tests", () => {
         expectRefused(nextResult);
         expect(cosmos.accountRequests).toBe(2);
         expect(cosmos.requests).toHaveLength(4);
+        expect(log.mock.calls).toEqual([
+          [lineWith("status code 403: It is not allowed.")],
+        ]);
+      });
+
+      it("should log once for each client that cannot read its account", async () => {
+        // arrange
+        const { container, store } = await setupAsync(...Array(3).fill(stored));
+        const other = await StubbedCosmos.startAsync([stored]);
+        const answer = {
+          status: 403,
+          body: { message: "It is not allowed." },
+        };
+        cosmos.accountAnswers.push(answer, answer, answer);
+        other.accountAnswers.push(answer);
+
+        // act
+        await store.appendAsync(id, events, 7);
+        await new CosmosEventStore(container).appendAsync(id, events, 7);
+        await store.appendAsync(id, events, 7);
+        await new CosmosEventStore(other.container).appendAsync(id, events, 7);
+        await other.stopAsync();
+
+        // assert
+        const line = lineWith("status code 403: It is not allowed.");
+        expect(log.mock.calls).toEqual([[line], [line]]);
+        expect(cosmos.accountRequests).toBe(3);
+        expect(other.accountRequests).toBe(1);
+      });
+
+      it("should log neither the endpoint nor the key when the account cannot be reached", async () => {
+        // arrange
+        const { store } = await setupAsync();
+        await cosmos.stopAsync();
+
+        // act
+        await appendAndCatchAsync(store);
+
+        // assert
+        expect(log.mock.calls).toEqual([[lineWith("ECONNREFUSED")]]);
+        const [[line]] = log.mock.calls;
+        expect(line).not.toContain(new URL(cosmos.endpoint).host);
+        expect(line).not.toContain(StubbedCosmos.key);
+      });
+
+      // a message that names the endpoint, and a code that is not a status code, are what
+      // the SDK rejects with when there was no answer
+      it.each<[string, number | string, string, string]>([
+        [
+          "an answer",
+          403,
+          "It is not allowed.",
+          "status code 403: It is not allowed.",
+        ],
+        [
+          "a name that is not found",
+          "ENOTFOUND",
+          "getaddrinfo ENOTFOUND my-account.documents.azure.com",
+          "ENOTFOUND",
+        ],
+        [
+          "a connection that is refused",
+          "ECONNREFUSED",
+          "connect ECONNREFUSED 10.0.0.1:443",
+          "ECONNREFUSED",
+        ],
+        [
+          "a wrong certificate",
+          "ERR_TLS_CERT_ALTNAME_INVALID",
+          "Hostname/IP does not match certificate's altnames: Host: " +
+            "my-account.documents.azure.com. is not in the cert's altnames: " +
+            "DNS:*.documents.azure.com",
+          "ERR_TLS_CERT_ALTNAME_INVALID",
+        ],
+      ])(
+        "should log nothing else of the reason when it is %s",
+        async (_, code, message, cause) => {
+          // arrange
+          const { container, store } = await setupAsync(stored);
+          const endpoint = "https://my-account.documents.azure.com:443/";
+          const authorization = `type=master&sig=${StubbedCosmos.key}`;
+          const reason = Object.assign(new Error(message), {
+            code,
+            headers: { authorization },
+            body: { message, endpoint },
+            request: { url: endpoint, headers: { authorization } },
+            diagnostics: { clientConfig: { endpoint }, authorization },
+          });
+          jest
+            .spyOn(container.database.client, "getDatabaseAccount")
+            .mockRejectedValueOnce(reason);
+
+          // act
+          await store.appendAsync(id, events, 7);
+
+          // assert
+          expect(log.mock.calls).toEqual([[lineWith(cause)]]);
+          const [[line]] = log.mock.calls;
+          expect(line).not.toContain("my-account");
+          expect(line).not.toContain("10.0.0.1");
+          expect(line).not.toContain(StubbedCosmos.key);
+          expect(line).not.toContain(id);
+        }
+      );
+
+      it("should append even if the console cannot log", async () => {
+        // arrange
+        const { store } = await setupAsync(stored);
+        cosmos.accountAnswers.push({ status: 403, body: { message: "No." } });
+        log.mockImplementation(() => {
+          throw new Error("from the console");
+        });
+
+        // act / assert
+        await expect(store.appendAsync(id, events, 7)).resolves.toBeUndefined();
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(cosmos.requests).toHaveLength(1);
       });
 
       it.each<[string, unknown, IPersistedEvent[]]>([
