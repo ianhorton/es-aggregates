@@ -220,7 +220,7 @@ Take care with these:
 
 - **A change that is made during a write is not stored by that write.** The aggregate keeps it, and the next write stores it.
 - **Wait for each write of an object before you write it again.** Two writes at once try to store the same changes, so one of them is rejected with a `ConcurrencyError`. Nothing is lost by that: when both are over, the object still has the changes that neither of them has stored, so write it once more. Do not make the changes again, or they can be stored twice.
-- **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version. So if there is a gap, every write of that aggregate is rejected with a `ConcurrencyError`.
+- **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version. So if there is a gap and one version is missing, every write of that aggregate is rejected with a `ConcurrencyError`. If several are missing, the next event can be stored inside the gap, so before older events, and it is only later that every write is rejected.
 - **`debug` logs the ids of aggregates**, and the types and versions of their events. So if an id must not get into your logs, because it is an email address for example, leave `debug` off. It logs no other value of an event, and no key. Each repository has its own setting, which does not affect the others.
 
 ## ConcurrencyError and how to retry
