@@ -20,7 +20,7 @@ Stores the events of [`@es-aggregates/core`](../core/README.md) in Azure Cosmos 
 npm install @es-aggregates/core @es-aggregates/cosmos @azure/cosmos
 ```
 
-Core and `@azure/cosmos` (version 4) are peer dependencies. The current versions of `@azure/cosmos`, from 4.10.0 on, need Node.js 22 or later.
+Core and `@azure/cosmos` (version 4.5.0 or later) are peer dependencies. `@azure/cosmos` needs Node.js 20 or later, and from 4.10.0 on, Node.js 22 or later.
 
 ## Container
 
@@ -157,8 +157,17 @@ A plain object may have any property names, also `id`, `_ts` and `__proto__`.
 ## Errors
 
 - `ConcurrencyError`: a version is already stored. Its `cause` is the response to the batch, or the error from the SDK.
+- If [it is not known](#when-the-outcome-is-not-known) whether it was the append itself that stored the version, it is an `Error` that says so. It has the same `cause`.
 - A batch that failed for another reason, such as throttling or size, is an `Error`. If the SDK returned a response for it, that is the `cause`, and the message has its status codes. If the SDK threw, the error is passed on as it is.
 - More than 100 events are refused before anything is sent.
+
+### When the outcome is not known
+
+**After any error other than a `ConcurrencyError`, read the aggregate again before you retry.** The events may have been stored, or not: after a timeout, a lost connection or a 503, [the SDK cannot know](https://learn.microsoft.com/azure/cosmos-db/conceptual-resilient-sdk-applications#timeouts-and-connectivity-related-failures-http-408503). If you make the change again without looking, it can be stored twice. Wait a little before you read, because [a read can miss](#consistency) what was stored just before it.
+
+The SDK does not pass on every such failure. It can send a batch again by itself, such as after a 503 if the account has [per-partition automatic failover](https://learn.microsoft.com/azure/cosmos-db/how-to-configure-per-partition-automatic-failover). If the first attempt stored the events, the second finds that their versions are taken. That looks as if another write came first, but after a `ConcurrencyError` you would make the change again. So the append is rejected with an `Error` instead. Its message begins with `It is not known whether the events`.
+
+It is a `ConcurrencyError` nevertheless if the earlier attempts are known to have stored nothing. They are if they were throttled (429), or refused by a region that does not take writes (403). They also are if the conflict is with a later event of the append, and not with the first.
 
 ## Tests with the emulator
 

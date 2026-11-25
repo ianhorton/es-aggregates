@@ -2,7 +2,7 @@ import { ConcurrencyError, IPersistedEvent } from "@es-aggregates/core";
 
 import { CosmosEventStore } from "../src";
 
-import { Answer, StubbedCosmos } from "./test-objects/stubbed-cosmos";
+import { Account, Answer, StubbedCosmos } from "./test-objects/stubbed-cosmos";
 
 describe("CosmosEventStore Tests", () => {
   const id = "aggregate id";
@@ -26,6 +26,15 @@ describe("CosmosEventStore Tests", () => {
     cosmos = await StubbedCosmos.startAsync(answers);
     const { container } = cosmos;
     return { container, store: new CosmosEventStore(container) };
+  };
+
+  // with an account, the SDK sends some requests again, if they fail
+  const setupWithAccountAsync = async (
+    account: Account,
+    ...answers: Answer[]
+  ) => {
+    cosmos = await StubbedCosmos.startAsync(answers, account);
+    return new CosmosEventStore(cosmos.container);
   };
 
   afterEach(async () => {
@@ -193,6 +202,342 @@ describe("CosmosEventStore Tests", () => {
         expect(error).toBeInstanceOf(ConcurrencyError);
         expect(error.cause).toBe(response);
       });
+    });
+
+    describe("when the SDK sends the batch more than once", () => {
+      // an account on which the SDK sends a batch again after a 503
+      const failover: Account = { enablePerPartitionFailoverBehavior: true };
+
+      const failure = (status: number, substatus?: number): Answer => ({
+        status,
+        body: { message: "It failed." },
+        headers:
+          substatus === undefined ? {} : { "x-ms-substatus": `${substatus}` },
+      });
+
+      const conflict = batch(207, 409, 424, 424);
+
+      const expectUnknown = (error: any, cause: unknown): void => {
+        // an app that catches a ConcurrencyError would make the change a second time
+        expect(error).not.toBeInstanceOf(ConcurrencyError);
+        expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+        expect(error.message).toBe(
+          'It is not known whether the events for aggregate "aggregate id" at version 7 ' +
+            "were stored: the SDK sent them more than once, and an earlier attempt may " +
+            "have stored them. Read the aggregate again before you retry anything."
+        );
+        expect(error.cause).toBe(cause);
+      };
+
+      it.each<[string, Account, Answer[]]>([
+        ["a 503", failover, [failure(503)]],
+        [
+          "a 503, with more than one write region",
+          { enableMultipleWriteLocations: true },
+          [failure(503)],
+        ],
+        ["a 503 and a 429", failover, [failure(503), failure(429)]],
+        ["a 429 and a 503", failover, [failure(429), failure(503)]],
+        ["a 503 and a 403/3", failover, [failure(503), failure(403, 3)]],
+        ["a 403/3 and a 503", failover, [failure(403, 3), failure(503)]],
+        ["a 503 that has a substatus", failover, [failure(503, 21006)]],
+        ["a 404/1002", {}, [failure(404, 1002)]],
+      ])(
+        "should not know whether the events were stored, when they conflict after %s",
+        async (_, account, failures) => {
+          // arrange
+          const store = await setupWithAccountAsync(
+            account,
+            ...failures,
+            conflict
+          );
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          expectUnknown(error, cosmos.outcomes[0]);
+          expect(error.cause.code).toBe(207);
+          expect(cosmos.requests).toHaveLength(failures.length + 1);
+          const [{ body }] = cosmos.requests;
+          expect(cosmos.requests.map((r) => r.body)).toEqual(
+            Array(failures.length + 1).fill(body)
+          );
+        }
+      );
+
+      it.each<[string, Answer]>([
+        ["a message", { status: 409, body: { message: "It is taken." } }],
+        ["no body", { status: 409 }],
+      ])(
+        "should not know whether the events were stored, when the SDK throws a 409 that has %s, after a 503",
+        async (_, answer) => {
+          // arrange
+          const store = await setupWithAccountAsync(
+            failover,
+            failure(503),
+            answer
+          );
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          expectUnknown(error, cosmos.outcomes[0]);
+          expect(error.cause.message).toMatch(/^Batch request error: /);
+          expect(cosmos.requests).toHaveLength(2);
+        }
+      );
+
+      it("should send the batch to another region after a 503", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          failover,
+          failure(503),
+          conflict
+        );
+
+        // act
+        await appendAndCatchAsync(store);
+
+        // assert
+        expect(cosmos.requests.map(({ path }) => path)).toEqual([
+          "/west/dbs/db/colls/events/docs",
+          "/east/dbs/db/colls/events/docs",
+        ]);
+      });
+
+      it.each<[string, Account, Answer[]]>([
+        ["a 429", {}, [failure(429)]],
+        ["several 429s", {}, [failure(429), failure(429), failure(429)]],
+        ["a 403/3", {}, [failure(403, 3)]],
+        ["a 403/3 that moves the partition", failover, [failure(403, 3)]],
+        ["a 403/1008", {}, [failure(403, 1008)]],
+        ["a 429 and a 403/3", {}, [failure(429), failure(403, 3)]],
+      ])(
+        "should reject with a ConcurrencyError when the events conflict after %s, which stored nothing",
+        async (_, account, failures) => {
+          // arrange
+          const store = await setupWithAccountAsync(
+            account,
+            ...failures,
+            conflict
+          );
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          expect(error).toBeInstanceOf(ConcurrencyError);
+          expect(error.cause).toBe(cosmos.outcomes[0]);
+          expect(cosmos.requests).toHaveLength(failures.length + 1);
+        }
+      );
+
+      // the first event is not stored, so that attempt stored none of them
+      it.each([
+        [424, 409, 424],
+        [424, 424, 409],
+      ])(
+        "should reject with a ConcurrencyError when the operations have %i, %i and %i after a 503",
+        async (...statusCodes) => {
+          // arrange
+          const store = await setupWithAccountAsync(
+            failover,
+            failure(503),
+            batch(207, ...statusCodes)
+          );
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          expect(error).toBeInstanceOf(ConcurrencyError);
+          expect(error.cause).toBe(cosmos.outcomes[0]);
+          expect(cosmos.requests).toHaveLength(2);
+        }
+      );
+
+      it("should succeed when the last attempt stores the events", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          failover,
+          failure(503),
+          stored
+        );
+
+        // act / assert
+        await expect(store.appendAsync(id, events, 7)).resolves.toBeUndefined();
+        expect(cosmos.requests).toHaveLength(2);
+      });
+
+      it("should not change the error when the last attempt fails, but not because of a conflict", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          failover,
+          failure(503),
+          failure(503)
+        );
+
+        // act
+        const error = await appendAndCatchAsync(store);
+
+        // assert
+        expect(error).not.toBeInstanceOf(ConcurrencyError);
+        expect(error).toBe(cosmos.outcomes[0]);
+        expect(cosmos.requests).toHaveLength(2);
+      });
+
+      // the SDK sends a batch again after these too, but they are not answers
+      const sendError = {
+        operationType: "batch",
+        statusCode: "REQUEST_SEND_ERROR",
+      };
+      const notFound = { operationType: "batch", statusCode: "ENOTFOUND" };
+
+      const request = (
+        statusCode: number,
+        subStatusCode?: number,
+        operationType: string | undefined = "batch"
+      ) => ({ operationType, statusCode, subStatusCode });
+
+      // the failed attempts, and then the answers, as the SDK's diagnostics list them. They
+      // do not have the substatus of a failed attempt, only that of an answer
+      const diagnostics: Array<[string, unknown[], unknown[], boolean]> = [
+        ["a lost connection", [sendError], [request(207)], false],
+        ["a name that is not found", [notFound], [request(207)], false],
+        [
+          "a lost connection and a 429",
+          [sendError, request(429)],
+          [request(429), request(207)],
+          false,
+        ],
+        ["a 403", [request(403)], [request(403), request(207)], false],
+        [
+          "a 403/1014",
+          [request(403)],
+          [request(403, 1014), request(207)],
+          false,
+        ],
+        ["a 408", [request(408)], [request(408), request(207)], false],
+        ["a 500", [request(500)], [request(500), request(207)], false],
+        [
+          "a 429 that was no answer",
+          [request(429)],
+          [request(200), request(207)],
+          false,
+        ],
+        [
+          "a 503, and a 429 to something else",
+          [request(503), request(429, undefined, "read")],
+          [request(503), request(429, undefined, "read"), request(207)],
+          false,
+        ],
+        [
+          "a 503 to something of which the type is not told",
+          [{ statusCode: 503 }],
+          [{ statusCode: 503 }, { statusCode: 207 }],
+          false,
+        ],
+        [
+          "a 503 to something else",
+          [request(503, undefined, "read")],
+          [request(503, undefined, "read"), request(207)],
+          true,
+        ],
+        ["a 429", [request(429)], [request(429), request(207)], true],
+        ["a 403/3", [request(403)], [request(403, 3), request(207)], true],
+        [
+          "a 403/1008",
+          [request(403)],
+          [request(403, 1008), request(207)],
+          true,
+        ],
+        ["nothing", [], [request(207)], true],
+      ];
+
+      it.each(diagnostics)(
+        "should go by the diagnostics of the response, which have %s",
+        async (_, failedAttempts, gatewayStatistics, isConflict) => {
+          // arrange
+          const { container, store } = await setupAsync();
+          const response: any = {
+            code: 207,
+            result: [409, 424, 424].map((statusCode) => ({ statusCode })),
+            diagnostics: {
+              clientSideRequestStatistics: {
+                retryDiagnostics: { failedAttempts },
+                gatewayStatistics,
+              },
+            },
+          };
+          container.items.batch = () => Promise.resolve(response);
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          if (isConflict) {
+            expect(error).toBeInstanceOf(ConcurrencyError);
+            expect(error.cause).toBe(response);
+          } else {
+            expectUnknown(error, response);
+          }
+        }
+      );
+
+      it.each(diagnostics)(
+        "should go by the diagnostics of what the SDK throws, which have %s",
+        async (_, failedAttempts, gatewayStatistics, isConflict) => {
+          // arrange
+          const { container, store } = await setupAsync();
+          const thrown = Object.assign(new Error("from the SDK"), {
+            cause: { code: 409 },
+            diagnostics: {
+              clientSideRequestStatistics: {
+                retryDiagnostics: { failedAttempts },
+                gatewayStatistics,
+              },
+            },
+          });
+          container.items.batch = () => Promise.reject(thrown);
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          if (isConflict) {
+            expect(error).toBeInstanceOf(ConcurrencyError);
+            expect(error.cause).toBe(thrown);
+          } else {
+            expectUnknown(error, thrown);
+          }
+        }
+      );
+
+      it.each([
+        ["none", undefined],
+        ["null", null],
+        ["nothing", {}],
+        ["no statistics", { clientSideRequestStatistics: {} }],
+        [
+          "no attempts",
+          { clientSideRequestStatistics: { retryDiagnostics: {} } },
+        ],
+      ])(
+        "should reject with a ConcurrencyError when the diagnostics are %s",
+        async (_, incomplete) => {
+          // arrange
+          const { container, store } = await setupAsync();
+          const response: any = { code: 409, diagnostics: incomplete };
+          container.items.batch = () => Promise.resolve(response);
+
+          // act / assert
+          await expect(store.appendAsync(id, events, 7)).rejects.toThrow(
+            ConcurrencyError
+          );
+        }
+      );
     });
 
     describe("when the events were not stored, or might not have been", () => {

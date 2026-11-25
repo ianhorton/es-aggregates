@@ -10,6 +10,7 @@ import { v4 } from "uuid";
 import { CosmosEventStore } from "../src";
 
 import { Emulator } from "./test-objects/emulator";
+import { LossyProxy } from "./test-objects/lossy-proxy";
 
 jest.setTimeout(90000);
 
@@ -339,6 +340,42 @@ Emulator.describe("In the Cosmos DB emulator", () => {
         // assert
         expect(error).toBeInstanceOf(ConcurrencyError);
         expect(await emulator.itemsAsync(id)).toEqual(before);
+      });
+    });
+
+    describe("when the answer to an append that was stored is lost", () => {
+      let proxy: LossyProxy;
+
+      beforeEach(async () => {
+        proxy = await LossyProxy.startAsync(emulator);
+      });
+
+      afterEach(async () => {
+        await proxy.stopAsync();
+      });
+
+      it("should not take its own events for those of another write", async () => {
+        // arrange
+        const id = v4();
+        const events = eventsOf(id, [0, 1]);
+        const lossyStore = new CosmosEventStore(proxy.container);
+
+        // act
+        const error = await lossyStore
+          .appendAsync(id, events, 0)
+          .catch((e) => e);
+
+        // assert
+        // the SDK sent them again, by itself, and the first one was there already
+        expect(proxy.batches).toEqual([200, 207]);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(ConcurrencyError);
+        expect(error.message).toMatch(/^It is not known whether /);
+        expect(error.cause.result).toMatchObject([
+          { statusCode: 409 },
+          { statusCode: 424 },
+        ]);
+        expect(await store.readAsync(id)).toStrictEqual(events);
       });
     });
   });

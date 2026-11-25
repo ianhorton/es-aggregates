@@ -13,8 +13,12 @@ import {
  * through the library.
  */
 export class Emulator {
-  private static readonly endpoint =
+  public static readonly endpoint =
     process.env.COSMOS_EMULATOR_ENDPOINT || "http://localhost:8081";
+
+  // every emulator has this key, and Microsoft publishes it, so it is not a secret
+  public static readonly key =
+    "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
 
   /**
    * To be called before any tests run. It tells them, in an environment variable, if
@@ -90,8 +94,7 @@ export class Emulator {
 
   private readonly client = new CosmosClient({
     endpoint: Emulator.endpoint,
-    // every emulator has this key, and Microsoft publishes it, so it is not a secret
-    key: "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
+    key: Emulator.key,
     connectionPolicy: { enableEndpointDiscovery: false },
     // the SDK leaves these out of the type of the options, so that needs a cast
     plugins: [{ on: PluginOn.request, plugin: this.splitAsync }],

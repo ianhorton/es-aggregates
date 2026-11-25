@@ -1,4 +1,4 @@
-import { Container, CosmosClient } from "@azure/cosmos";
+import { ConnectionPolicy, Container, CosmosClient } from "@azure/cosmos";
 import {
   createServer,
   IncomingHttpHeaders,
@@ -19,19 +19,50 @@ export type Answer =
   | { status: number; body?: unknown; headers?: Record<string, string> }
   | "hang up";
 
+// what an account has, besides its regions
+export interface Account {
+  enableMultipleWriteLocations?: boolean;
+  enablePerPartitionFailoverBehavior?: boolean;
+}
+
 /**
  * A container that is not in Cosmos DB, but on a server that records the requests, as
  * the SDK sends them, and that gives each the next answer from a list.
+ *
+ * Without an account, the SDK sends each request once. With one, it does what it does in
+ * most apps: it finds out which regions the account has, and it sends some requests again,
+ * if they fail. The path of each request begins with the region.
  */
 export class StubbedCosmos {
+  // it is the default since version 4.6.0 of the SDK
+  public static readonly sendAgain: ConnectionPolicy = {
+    enablePartitionLevelFailover: true,
+  };
+
+  private static readonly sendOnce: ConnectionPolicy = {
+    enableEndpointDiscovery: false,
+    retryOptions: {
+      maxRetryAttemptCount: 0,
+      fixedRetryIntervalInMilliseconds: 0,
+      maxWaitTimeInSeconds: 0,
+    },
+  };
+
   public static startAsync = async (
-    answers: Answer[]
+    answers: Answer[],
+    account?: Account
   ): Promise<StubbedCosmos> => {
     const server = createServer();
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve)
     );
-    return new StubbedCosmos(answers, server);
+    const cosmos = new StubbedCosmos(answers, server, account);
+    if (account) {
+      // before its first request, the SDK asks for the account. It must know that when it
+      // sends a batch, to be able to send it to another region
+      await cosmos.container.read();
+    }
+    return cosmos;
   };
 
   public readonly requests: SentRequest[] = [];
@@ -43,24 +74,23 @@ export class StubbedCosmos {
 
   private readonly client: CosmosClient;
 
+  private readonly endpoint: string;
+
   private constructor(
     private readonly answers: Answer[],
-    private readonly server: Server
+    private readonly server: Server,
+    private readonly account?: Account
   ) {
     server.on("request", this.answerAsync);
 
     const { port } = server.address() as AddressInfo;
+    this.endpoint = `http://127.0.0.1:${port}/`;
     this.client = new CosmosClient({
-      endpoint: `http://127.0.0.1:${port}`,
+      endpoint: this.endpoint,
       key: "bm90IGEgcmVhbCBrZXk=",
-      connectionPolicy: {
-        enableEndpointDiscovery: false,
-        retryOptions: {
-          maxRetryAttemptCount: 0,
-          fixedRetryIntervalInMilliseconds: 0,
-          maxWaitTimeInSeconds: 0,
-        },
-      },
+      connectionPolicy: account
+        ? StubbedCosmos.sendAgain
+        : StubbedCosmos.sendOnce,
     });
     this.container = this.client.database("db").container("events");
 
@@ -100,6 +130,12 @@ export class StubbedCosmos {
       return;
     }
 
+    const metadata = this.metadata(request);
+    if (metadata !== undefined) {
+      response.writeHead(200).end(JSON.stringify(metadata));
+      return;
+    }
+
     const body = Buffer.concat(chunks).toString();
     this.requests.push({
       path: request.url!,
@@ -117,5 +153,36 @@ export class StubbedCosmos {
         answer.body === undefined ? "" : JSON.stringify(answer.body)
       );
     }
+  };
+
+  // what the SDK asks for, besides the items, to find out where to send a request
+  private metadata = ({ method, url }: IncomingMessage): unknown => {
+    if (method !== "GET") {
+      return undefined;
+    }
+    if (url === "/") {
+      const [west, east] = ["west", "east"].map((name) => ({
+        name,
+        databaseAccountEndpoint: `${this.endpoint}${name}/`,
+      }));
+      return {
+        id: "account",
+        writableLocations: this.account?.enableMultipleWriteLocations
+          ? [west, east]
+          : [west],
+        readableLocations: [west, east],
+        ...this.account,
+      };
+    }
+    if (url!.endsWith("/colls/events")) {
+      return { id: "events", partitionKey: { paths: ["/aggregateId"] } };
+    }
+    if (url!.endsWith("/pkranges")) {
+      return {
+        PartitionKeyRanges: [{ id: "0", minInclusive: "", maxExclusive: "FF" }],
+        _count: 1,
+      };
+    }
+    return undefined;
   };
 }

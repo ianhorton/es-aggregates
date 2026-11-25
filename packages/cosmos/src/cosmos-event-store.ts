@@ -1,5 +1,6 @@
 import {
   Container,
+  CosmosDiagnostics,
   CreateOperationInput,
   ErrorResponse,
   JSONObject,
@@ -12,6 +13,13 @@ import {
   EventStore,
   IPersistedEvent,
 } from "@es-aggregates/core";
+
+// what the SDK's diagnostics tell about a request that it sent
+interface SentRequest {
+  operationType?: string;
+  statusCode?: number;
+  subStatusCode?: number;
+}
 
 /**
  * Stores events in a container of Cosmos DB for NoSQL. The container must have
@@ -34,6 +42,11 @@ import {
  * nothing and rejects with a ConcurrencyError. That needs an account with a single write
  * region: with more, two regions can both store the same version, and Cosmos DB then
  * keeps only one of the two events.
+ *
+ * After any other error, the events may have been stored, or not: read the aggregate again
+ * before you retry. One of these errors is for an append that the SDK, by itself, sent more
+ * than once, as it can after a 503. Then a version that is already stored can be one that
+ * an earlier attempt of the same append has stored, so that is not a ConcurrencyError.
  *
  * A read sorts by aggregateVersion, and fails if that has no range index. If aggregateId
  * has none, the read scans, which costs more. The default indexing policy indexes both.
@@ -66,7 +79,11 @@ export class CosmosEventStore implements EventStore {
       response = await this.container.items.batch(operations, aggregateId);
     } catch (error) {
       if (this.isConflict(error)) {
-        throw new ConcurrencyError(aggregateId, expectedVersion, error);
+        throw this.conflictError(
+          aggregateId,
+          expectedVersion,
+          error as ErrorResponse
+        );
       }
       throw error;
     }
@@ -75,7 +92,11 @@ export class CosmosEventStore implements EventStore {
     const code = response?.code;
     const operationCodes = this.operationCodes(response?.result);
     if (code === 409 || operationCodes.includes(409)) {
-      throw new ConcurrencyError(aggregateId, expectedVersion, response);
+      // if an earlier attempt had stored these events, the first one would conflict. So if
+      // a later one does, none of them was stored
+      throw operationCodes.indexOf(409) > 0
+        ? new ConcurrencyError(aggregateId, expectedVersion, response)
+        : this.conflictError(aggregateId, expectedVersion, response);
     }
     if (
       code !== 200 ||
@@ -141,6 +162,64 @@ export class CosmosEventStore implements EventStore {
       ...requests.map(({ statusCode }) => statusCode),
     ].includes(409);
   };
+
+  /**
+   * The error for a version that is already stored. It can be a ConcurrencyError only if it
+   * is known that no earlier attempt of the same append has stored that version.
+   */
+  private conflictError = (
+    aggregateId: string,
+    expectedVersion: number,
+    cause?: Response<OperationResponse[]> | ErrorResponse
+  ): Error =>
+    this.mayHaveBeenStored(cause?.diagnostics)
+      ? Object.assign(
+          new Error(
+            `It is not known whether the events for aggregate "${aggregateId}" at version ` +
+              `${expectedVersion} were stored: the SDK sent them more than once, and an ` +
+              "earlier attempt may have stored them. Read the aggregate again before you " +
+              "retry anything."
+          ),
+          { cause }
+        )
+      : new ConcurrencyError(aggregateId, expectedVersion, cause);
+
+  /**
+   * Whether an attempt before the last one may have stored the events. The SDK sends a
+   * batch again after some failures that do not tell whether it was stored, such as a 503.
+   */
+  private mayHaveBeenStored = (diagnostics?: CosmosDiagnostics): boolean => {
+    const statistics = diagnostics?.clientSideRequestStatistics;
+    const failed: SentRequest[] =
+      statistics?.retryDiagnostics?.failedAttempts ?? [];
+    // a failed attempt is here too if the service answered it, and only here it has the
+    // substatus
+    const answered: SentRequest[] = statistics?.gatewayStatistics ?? [];
+
+    return (
+      failed.filter(this.isBatch).length >
+      answered.filter(this.isBatch).filter(this.isRefusal).length
+    );
+  };
+
+  // the SDK can also have sent requests for other things, such as the account's regions
+  private isBatch = ({ operationType = "batch" }: SentRequest): boolean =>
+    operationType === "batch";
+
+  /**
+   * Whether the service certainly stored nothing. Of the answers after which the SDK sends
+   * a batch again, these are the only ones that are documented to mean that:
+   * - 429: there are too many requests
+   * - 403 with substatus 3: the region does not take writes
+   * - 403 with substatus 1008: the region does not have the account
+   *
+   * https://learn.microsoft.com/azure/cosmos-db/conceptual-resilient-sdk-applications
+   * https://learn.microsoft.com/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+   * https://github.com/Azure/azure-sdk-for-java/blob/main/sdk/cosmos/azure-cosmos/docs/StatusCodes.md
+   */
+  private isRefusal = ({ statusCode, subStatusCode }: SentRequest): boolean =>
+    statusCode === 429 ||
+    (statusCode === 403 && (subStatusCode === 3 || subStatusCode === 1008));
 
   private operationCodes = (
     result?: OperationResponse[]
