@@ -91,6 +91,7 @@ export async function saveAsync(
 }
 ```
 
+- If the same object [was written twice at once](../packages/core/README.md#repository), do not make the changes again, or they can be stored twice. When both writes are over, the object still has the changes that neither of them has stored, so write it once more.
 - The reasons that became a `ConcurrencyError` are `ConditionalCheckFailed` and `TransactionConflict`. A transaction that was cancelled for any other reason, such as throttling, is still a `TransactionCanceledException`.
 - `CancellationReasons` and the rest are on `error.cause` now.
 - The message is another one. Change log filters and alarms that look for the old message or name.
