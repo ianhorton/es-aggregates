@@ -34,8 +34,8 @@ export interface Account {
  * if they fail. The path of each request begins with the region.
  */
 export class StubbedCosmos {
-  // it is the default since version 4.6.0 of the SDK
-  public static readonly sendAgain: ConnectionPolicy = {
+  private static readonly sendAgain: ConnectionPolicy = {
+    // the default since version 4.6.0 of the SDK
     enablePartitionLevelFailover: true,
   };
 
@@ -157,7 +157,7 @@ export class StubbedCosmos {
 
   // what the SDK asks for, besides the items, to find out where to send a request
   private metadata = ({ method, url }: IncomingMessage): unknown => {
-    if (method !== "GET") {
+    if (this.account === undefined || method !== "GET") {
       return undefined;
     }
     if (url === "/") {
@@ -167,7 +167,7 @@ export class StubbedCosmos {
       }));
       return {
         id: "account",
-        writableLocations: this.account?.enableMultipleWriteLocations
+        writableLocations: this.account.enableMultipleWriteLocations
           ? [west, east]
           : [west],
         readableLocations: [west, east],

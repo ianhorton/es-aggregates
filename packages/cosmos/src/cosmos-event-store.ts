@@ -252,14 +252,13 @@ export class CosmosEventStore implements EventStore {
 
   /**
    * Whether the service certainly stored nothing. Of the answers after which the SDK sends
-   * a batch again, these are the only ones that are documented to mean that:
-   * - 429: there are too many requests
-   * - 403 with substatus 3: the region does not take writes
-   * - 403 with substatus 1008: the region does not have the account
-   *
-   * https://learn.microsoft.com/azure/cosmos-db/conceptual-resilient-sdk-applications
-   * https://learn.microsoft.com/rest/api/cosmos-db/http-status-codes-for-cosmosdb
-   * https://github.com/Azure/azure-sdk-for-java/blob/main/sdk/cosmos/azure-cosmos/docs/StatusCodes.md
+   * a batch again, only these are documented to mean that:
+   * - 429, because there are too many requests:
+   *   https://learn.microsoft.com/azure/cosmos-db/troubleshoot-request-rate-too-large
+   * - 403 with substatus 3, because the region does not take writes:
+   *   https://learn.microsoft.com/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+   * - 403 with substatus 1008, because the region does not have the account:
+   *   https://github.com/Azure/azure-sdk-for-java/blob/main/sdk/cosmos/azure-cosmos/docs/StatusCodes.md
    */
   private isRefusal = ({ statusCode, subStatusCode }: SentRequest): boolean =>
     statusCode === 429 ||

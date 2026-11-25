@@ -3,7 +3,6 @@ import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { AddressInfo } from "net";
 
 import { Emulator } from "./emulator";
-import { StubbedCosmos } from "./stubbed-cosmos";
 
 /**
  * Stands between the SDK and the emulator, and loses the answer to the first batch: the
@@ -36,7 +35,8 @@ export class LossyProxy {
     this.client = new CosmosClient({
       endpoint: `http://127.0.0.1:${port}/`,
       key: Emulator.key,
-      connectionPolicy: StubbedCosmos.sendAgain,
+      // the default since version 4.6.0 of the SDK
+      connectionPolicy: { enablePartitionLevelFailover: true },
     });
     this.container = this.client
       .database(emulator.container.database.id)
