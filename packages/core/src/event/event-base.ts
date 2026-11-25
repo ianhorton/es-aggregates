@@ -18,7 +18,7 @@ const warnedConstructorArgTypes = new Set<string>();
  *   }
  *
  * The legacy constructor-arg form still works but is DEPRECATED (removal is a
- * future 2.0.0):
+ * future major version):
  *
  *   super("UserRenamed", ["displayName"]);
  *
