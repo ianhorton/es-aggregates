@@ -21,8 +21,13 @@ import {
 /**
  * Stores events in a DynamoDB table whose partition key is aggregateId (a string)
  * and whose sort key is aggregateVersion (a number).
+ *
+ * An append is one transaction, so it can have at most 100 events, and 4 MB.
  */
 export class DynamoEventStore implements EventStore {
+  // as many items as a transaction can have
+  private static readonly maxEvents = 100;
+
   constructor(
     private readonly dynamoDBClient: DynamoDBClient,
     private readonly eventTableName: string
@@ -33,6 +38,13 @@ export class DynamoEventStore implements EventStore {
     events: IPersistedEvent[],
     expectedVersion: number
   ): Promise<void> => {
+    if (events.length > DynamoEventStore.maxEvents) {
+      throw new Error(
+        `Cannot append ${events.length} events to aggregate "${aggregateId}" at once. ` +
+          `The limit is ${DynamoEventStore.maxEvents}.`
+      );
+    }
+
     const transactWriteItemList: TransactWriteItem[] = [];
 
     for (const event of events) {

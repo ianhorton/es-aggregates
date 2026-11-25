@@ -8,13 +8,15 @@ import { Answer, StubbedDynamoDB } from "./test-objects/stubbed-dynamodb";
 describe("DynamoEventStore Tests", () => {
   const id = "aggregate id";
 
-  const events: IPersistedEvent[] = [7, 8].map((aggregateVersion) => ({
+  const event = (aggregateVersion: number): IPersistedEvent => ({
     aggregateId: id,
     eventType: "SomethingHappened",
     timestamp: "2026-01-01T00:00:00.000Z",
     aggregateVersion,
     data: {},
-  }));
+  });
+
+  const events = [event(7), event(8)];
 
   const setup = (...answers: Answer[]) => {
     const dynamo = new StubbedDynamoDB(answers);
@@ -64,6 +66,32 @@ describe("DynamoEventStore Tests", () => {
         },
       }))
     );
+  });
+
+  it("should send as many as 100 events, but no more", async () => {
+    // arrange
+    const versions = [...Array(101).keys()];
+    const { dynamo, store } = setup(
+      { status: 200, body: {} },
+      { status: 200, body: {} }
+    );
+    const tooMany = versions.map((version) => event(version));
+
+    // act
+    await store.appendAsync(id, tooMany.slice(0, 100), 0);
+    const error = await store.appendAsync(id, tooMany, 0).catch((e) => e);
+
+    // assert
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(
+      'Cannot append 101 events to aggregate "aggregate id" at once. The limit is 100.'
+    );
+    expect(dynamo.requests).toHaveLength(1);
+    expect(
+      JSON.parse(dynamo.requests[0].body).TransactItems.map(
+        ({ Put }: any) => Put.Item.aggregateVersion.N
+      )
+    ).toEqual(versions.slice(0, 100).map((version) => `${version}`));
   });
 
   // an ongoing transaction is writing the version, or a finished one has written it

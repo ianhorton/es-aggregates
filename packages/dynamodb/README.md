@@ -99,6 +99,7 @@ export const users = new Repository(store, () => new User());
 - An append is one transaction, with a `Put` for each event, on the condition that its version is not stored yet.
 - A read is a strongly consistent query, so it has every event that was stored before it. It reads all the pages.
 - An append is rejected with a `ConcurrencyError` if a version is already stored, or is being stored by another transaction. Its `cause` is the `TransactionCanceledException`. Other errors are passed on as they are. One of those can be a `TransactionCanceledException` too, if the transaction was cancelled for another reason, such as throttling.
+- More than 100 events are refused before anything is sent.
 - After any other error, such as a timeout or a lost connection, the events may have been stored, or not. So read the aggregate again before you retry anything. If you make the change again without looking, it can be stored twice.
 
 ## Limits

@@ -215,6 +215,39 @@ describe("Compatibility with es-aggregates 1.1.1", () => {
       }
     );
 
+    it("should be the same when writing 100 changes, as many as there can be", async () => {
+      // act
+      const [run1, run2] = await runBothAsync([ok], async (app, client) => {
+        const ar = app.TestAggregateRoot.create("some id", "name 0");
+        for (let version = 1; version < 100; version++) {
+          ar.changeName(`name ${version}`);
+        }
+
+        let refusal: string | undefined;
+        try {
+          ar.changeName("name 100");
+        } catch (error) {
+          refusal = (error as Error).message;
+        }
+
+        await app.repository(table.name, client).writeAsync(ar);
+        return refusal;
+      });
+
+      // assert
+      expect(run2).toEqual(run1);
+      expect(JSON.stringify(run2.sent)).toBe(JSON.stringify(run1.sent));
+
+      // and this is the request that was to be compared
+      expect(run1.sent).toMatchObject([
+        {
+          operation: "TransactWriteItems",
+          input: { TransactItems: { length: 100 } },
+        },
+      ]);
+      expect(run1.result).toContain("limit of 100");
+    });
+
     it.each([
       ["a date", new Date(0)],
       ["an instance of a class", new (class Thing {})()],
