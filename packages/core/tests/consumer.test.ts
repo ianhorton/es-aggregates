@@ -3,7 +3,12 @@ import { Consumer } from "@es-aggregates/store-tests/src/consumer";
 describe("Apps that use the package", () => {
   const consumer = new Consumer("core");
 
-  const rightNames = ["name", "nickname", "address", "address.city"];
+  const rightNames = [
+    "name",
+    "nickname",
+    "address.city",
+    "initials", // it is a getter
+  ];
   const wrongNames = [
     "nmae",
     "Name",
@@ -14,6 +19,7 @@ describe("Apps that use the package", () => {
     "encryptedProps",
     "secret", // it is private
     "country", // it is static
+    "print", // it is a method
   ];
 
   // an event for each name, which is the one in its list
@@ -37,6 +43,71 @@ describe("Apps that use the package", () => {
             ) {
               super();
             }
+
+            get initials() {
+              return this.name[0];
+            }
+
+            print() {
+              return this.name;
+            }
+          }
+        }`
+      )
+      .join("\n");
+
+  // a property of each type, and an optional one
+  const propsOf = (types: string[]) =>
+    types.flatMap((type) => [`value: ${type}`, `value?: ${type}`]);
+
+  const rightProps = propsOf([
+    "string",
+    "string | null",
+    "string | undefined",
+    "null",
+    '"home" | "work"',
+    "`user-${string}`",
+    "Email", // it is a branded string
+    "Role", // it is an enum of strings
+    "any",
+  ]);
+  const wrongProps = propsOf([
+    "number",
+    "bigint",
+    "boolean",
+    "symbol",
+    "String",
+    "Date",
+    "string[]",
+    "{ street: string }",
+    "() => string",
+    "Level", // it is an enum of numbers
+    "string | number",
+    "string | string[]",
+    "number | null",
+    "unknown",
+  ]);
+
+  // the types that are the app's own
+  const types = `
+    type Email = string & { readonly isEmail: true };
+    enum Role { Admin = "admin", Guest = "guest" }
+    enum Level { Low, High }
+  `;
+
+  // an event for each property, which is the one in its list
+  const eventsOf = (props: string[], comment = "") =>
+    props
+      .map(
+        (prop) => `{
+          class UserChanged extends EventBase {
+            static eventType = "UserChanged";
+            ${comment}
+            static encryptedProps: EncryptedProps<UserChanged> = ["value"];
+
+            constructor(readonly name: string, readonly ${prop}) {
+              super();
+            }
           }
         }`
       )
@@ -47,6 +118,10 @@ describe("Apps that use the package", () => {
 
     ${eventsWith(rightNames)}
     ${eventsWith(wrongNames, "// @ts-expect-error")}
+
+    ${types}
+    ${eventsOf(rightProps)}
+    ${eventsOf(wrongProps, "// @ts-expect-error")}
 
     // events whose lists do not have the type
     export class UserCreated extends EventBase {
@@ -74,7 +149,7 @@ describe("Apps that use the package", () => {
     export class UserLeft extends EventBase {
       static encryptedProps: EncryptedProps<UserLeft> = ["reason"];
 
-      constructor(readonly reason: string) {
+      constructor(readonly reason: string, readonly remark?: string) {
         super("UserLeft", UserLeft.encryptedProps);
       }
     }
@@ -85,6 +160,13 @@ describe("Apps that use the package", () => {
       encryptedProps: UserLeft.encryptedProps,
     };
 
+    // the same, where it is not known which event it is
+    export abstract class PrivateEvent<T extends IEvent> extends EventBase {
+      constructor(eventType: string, encryptedProps: EncryptedProps<T>) {
+        super(eventType, encryptedProps);
+      }
+    }
+
     // but not every list has the type
     // @ts-expect-error
     UserLeft.encryptedProps = list;
@@ -92,27 +174,83 @@ describe("Apps that use the package", () => {
     UserLeft.encryptedProps = "reason";
     // @ts-expect-error
     UserLeft.encryptedProps = undefined;
+    // @ts-expect-error
+    UserLeft.encryptedProps = [undefined];
 
-    // an event that does not extend EventBase
+    // events that do not extend EventBase
     export interface UserBanned extends IEvent {
       readonly reason: string;
+      readonly days: number;
     }
     export const ofInterface: EncryptedProps<UserBanned> = ["reason"];
     // @ts-expect-error
     ofInterface.push("raeson");
+    // @ts-expect-error
+    ofInterface.push("days");
+
+    export class UserWarned implements IEvent {
+      static encryptedProps: EncryptedProps<UserWarned> = ["reason"];
+
+      readonly eventType = "UserWarned";
+      readonly timestamp = "2026-01-01T00:00:00.000Z";
+      readonly encryptedProps = UserWarned.encryptedProps;
+
+      constructor(readonly reason: string) {}
+    }
 
     // an event that has no properties but EventBase's
     export const ofNone: EncryptedProps<UserDeleted> = [];
     // @ts-expect-error
     ofNone.push("name");
 
-    // an event that can have any property
+    // an event that can have any property, of any type
     export interface UserImported extends IEvent {
-      readonly [name: string]: unknown;
+      readonly [name: string]: any;
       readonly 1: string;
     }
     export const ofAny: EncryptedProps<UserImported> = ["name"];
     export const listOfAny: string[] = ofAny;
+
+    // an event that can have any property, of a type that is not known
+    export interface UserExported extends IEvent {
+      readonly [name: string]: unknown;
+    }
+    export const ofUnknown: EncryptedProps<UserExported> = [];
+    // @ts-expect-error
+    ofUnknown.push("name");
+
+    // an event that has a property of any one type
+    export class UserUpdated<T> extends EventBase {
+      static eventType = "UserUpdated";
+      static encryptedProps: EncryptedProps<UserUpdated<unknown>> = ["field"];
+
+      constructor(readonly field: string, readonly value: T) {
+        super();
+      }
+    }
+    // @ts-expect-error
+    UserUpdated.encryptedProps = ["value"];
+    export const ofString: EncryptedProps<UserUpdated<string>> = ["value"];
+
+    // an event that is one of two
+    type Updated = UserUpdated<string> | UserUpdated<number>;
+    export let ofUnion: EncryptedProps<Updated> = ["field"];
+    // @ts-expect-error
+    ofUnion = ["value"];
+
+    // an event that has another one like it, and that uses its own list
+    export class UserMerged extends EventBase {
+      static eventType = "UserMerged";
+      static encryptedProps: EncryptedProps<UserMerged> = ["name"];
+
+      constructor(readonly name: string, readonly other?: UserMerged) {
+        super();
+      }
+
+      isPrivate(name: string) {
+        return UserMerged.encryptedProps.some((prop) => prop === name);
+      }
+    }
 
     // an event that extends one whose list does not have the type
     export class AdminCreated extends UserCreated {
@@ -150,6 +288,23 @@ describe("Apps that use the package", () => {
       ...rightNames.map(() => "Unused '@ts-expect-error' directive."),
       ...wrongNames.map((name) =>
         expect.stringContaining(`Type '"${name}"' is not assignable to type `)
+      ),
+    ]);
+  });
+
+  it("should not compile with a property that can be something other than a string, null or undefined", () => {
+    const wrongApp = `
+      import { EncryptedProps, EventBase } from "@es-aggregates/core";
+
+      ${types}
+      ${eventsOf(rightProps, "// @ts-expect-error")}
+      ${eventsOf(wrongProps)}
+    `;
+
+    expect(consumer.errorsOf("app.mts", wrongApp, false)).toEqual([
+      ...rightProps.map(() => "Unused '@ts-expect-error' directive."),
+      ...wrongProps.map(
+        () => `Type '"value"' is not assignable to type '"name"'.`
       ),
     ]);
   });

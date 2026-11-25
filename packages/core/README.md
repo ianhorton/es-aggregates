@@ -329,7 +329,7 @@ export class EmailChanged extends EventBase {
 }
 ```
 
-Then a name that is not a public property of the event, such as `"emial"` or `"address.city"`, does not compile. Nor do `"eventType"`, `"timestamp"` and `"encryptedProps"`, which are never encrypted.
+Then a name that is not a public property of the event, such as `"emial"` or `"address.city"`, does not compile. Nor does one whose value can be something other than a string, `null` or `undefined`, such as a number. Nor do `"eventType"`, `"timestamp"` and `"encryptedProps"`, which are never encrypted.
 
 A write with a key also logs a warning, with `console.warn`, in these two cases. The event is stored all the same.
 
