@@ -22,7 +22,7 @@ jobs:
     services:
       # for the tests of packages/cosmos, which wait for it to start
       cosmos:
-        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-latest
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:c274ac17c19a5f74dbadbc99f259bc49a8640a03f6789f54d7f76cbfc33ff6b6 # vnext-latest on 2026-11-25
         ports:
         - 8081:8081
 
