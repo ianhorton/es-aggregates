@@ -20,7 +20,8 @@ import {
  *         decrypts with the single provided key and keyId is informational; the
  *         GCM tag is what proves the key is correct.
  * - iv    per-value random 12-byte GCM nonce (base64url).
- * - ciphertext, tag  base64url; tag is the 16-byte GCM auth tag.
+ * - ciphertext, tag  base64url; tag is the 16-byte GCM auth tag. A tag of any
+ *         other length is refused.
  *
  * The read path decides decrypt-vs-passthrough from the VALUE ITSELF
  * (`isEncrypted`), never from an external marker. Plaintext (written key-less)
@@ -31,6 +32,7 @@ import {
 const ENVELOPE_VERSION = "ENC1";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // GCM standard nonce length
+const AUTH_TAG_LENGTH = 16; // full GCM tag length
 const KEY_ID_LENGTH = 12;
 const DELIMITER = ".";
 const ENVELOPE_PARTS = 6;
@@ -109,10 +111,14 @@ function decrypt(value: string, key: string): string {
     throw new Error(`Unsupported envelope algorithm: ${alg}`);
   }
 
+  // With authTagLength, setAuthTag throws if the tag has any other length. Without
+  // it, Node 24 also accepts a tag that is cut short, to 4 bytes for example, which
+  // is much easier to forge.
   const decipher = createDecipheriv(
     ALGORITHM,
     prepareKey(key),
-    fromB64url(ivPart)
+    fromB64url(ivPart),
+    { authTagLength: AUTH_TAG_LENGTH }
   );
   decipher.setAuthTag(fromB64url(tagPart));
 

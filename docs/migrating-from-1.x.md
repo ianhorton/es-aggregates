@@ -115,12 +115,13 @@ These are small. Most apps will not notice them.
 
 - **Debug logging.** With `debug`, a read logs all of its items once. 1.x logged what it had so far twice for each page. A write no longer logs the answer of DynamoDB.
 - **Which of two errors you get.** If one write has both an event that cannot be encrypted (a property in `encryptedProps` that is not a string) and another that DynamoDB cannot hold (such as a `Date`), 1.x reported whichever event came first. 2.0 encrypts all the events before it converts any, so it reports the encryption error. Neither stores anything.
+- **A shortened authentication tag** no longer decrypts. Each encrypted value ends with a tag of 16 bytes, which shows whether the value was altered. 1.x did not insist on all 16, so tampering by cutting the tag short, to 4 bytes for example, could go unnoticed. 2.0 does, and it treats such a value like any other that was altered: `decrypt` throws, and a read leaves the value as it is and logs an error. Neither version has ever stored a short tag, so your stored data is not affected.
 - **Private members.** `Repository` has the private members `store` and `appendEventsAsync`, and no longer has `eventTableName`, `dynamoDBClient` and `transactWriteAsync`. So if you extend the repository, do not call a member of your own class `store` or `appendEventsAsync`.
 - **The class's name** is `DynamoRepository`, if you log or compare it.
 - **Deep imports**, such as `es-aggregates/dist/aggregate/repository`, do not work. What you need is exported by the packages.
 - **The AWS SDK** is not installed by the library any more, so do not count on it being there.
 - **New exports** in core: `EventStore` and `ConcurrencyError`.
 
-These have **not** changed: the aggregates, entities and events, `IRepository`, the order in which events are read, encryption, the limit of 100 changes, and the deprecation warning for `super("UserCreated", ["name"])`.
+These have **not** changed: the aggregates, entities and events, `IRepository`, the order in which events are read, how values are encrypted, the limit of 100 changes, and the deprecation warning for `super("UserCreated", ["name"])`.
 
 The limits and the values that are altered are the same too. They are in the READMEs now: [of core](../packages/core/README.md) and [of dynamodb](../packages/dynamodb/README.md).
