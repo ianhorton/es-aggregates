@@ -109,20 +109,6 @@ Emulator.describe("In the Cosmos DB emulator", () => {
       expect(JSON.stringify(read[6].data)).toBe('{"__proto__":{"a":1},"b":2}');
     });
 
-    it("should append to the events that are already there", async () => {
-      // arrange
-      const id = v4();
-      const events = eventsOf(id, range(0, 5));
-
-      // act
-      await store.appendAsync(id, events.slice(0, 1), 0);
-      await store.appendAsync(id, events.slice(1, 4), 1);
-      await store.appendAsync(id, events.slice(4), 4);
-
-      // assert
-      expect(await store.readAsync(id)).toStrictEqual(events);
-    });
-
     it("should read many events, from many pages", async () => {
       // arrange
       const id = v4();
@@ -139,56 +125,6 @@ Emulator.describe("In the Cosmos DB emulator", () => {
       expect(read).toHaveLength(1050);
       expect(read).toStrictEqual(events);
       expect(emulator.pageSizes).toEqual([...Array(10).fill(100), 50]);
-    });
-
-    it("should read events in the order of their versions, not in the order they were stored", async () => {
-      // arrange
-      const id = v4();
-
-      // act
-      for (const versions of [
-        [100],
-        range(8, 11),
-        [2],
-        range(98, 99),
-        [0, 1],
-      ]) {
-        await store.appendAsync(id, eventsOf(id, versions), versions[0]);
-      }
-
-      // assert
-      expect(await store.readAsync(id)).toStrictEqual(
-        eventsOf(id, [0, 1, 2, 8, 9, 10, 11, 98, 99, 100])
-      );
-    });
-
-    it("should return an empty array for an unknown aggregate", async () => {
-      expect(await store.readAsync(v4())).toEqual([]);
-    });
-
-    it("should keep aggregates apart", async () => {
-      // arrange
-      const uuid = `a-${v4()}`;
-      const ids = [
-        uuid,
-        uuid.toUpperCase(),
-        `${uuid}/`,
-        `${uuid} `,
-        `["${uuid}"]`,
-        `${uuid} é東京`,
-      ];
-
-      // act
-      for (const id of ids) {
-        await store.appendAsync(id, eventsOf(id, [0, 1], { of: id }), 0);
-      }
-
-      // assert
-      for (const id of ids) {
-        expect(await store.readAsync(id)).toStrictEqual(
-          eventsOf(id, [0, 1], { of: id })
-        );
-      }
     });
 
     it.each([[undefined], [null], [7]])(
@@ -404,27 +340,6 @@ Emulator.describe("In the Cosmos DB emulator", () => {
         expect(error).toBeInstanceOf(ConcurrencyError);
         expect(await emulator.itemsAsync(id)).toEqual(before);
       });
-
-      it("should store only one of several appends that are made at once", async () => {
-        // arrange
-        const id = v4();
-        const appends = range(0, 7).map((writer) =>
-          eventsOf(id, [0, 1, 2], { writer })
-        );
-
-        // act
-        const errors = await Promise.all(
-          appends.map((events) =>
-            store.appendAsync(id, events, 0).catch((e) => e)
-          )
-        );
-
-        // assert
-        const winner = errors.indexOf(undefined);
-        expect(await store.readAsync(id)).toStrictEqual(appends[winner]);
-        errors.splice(winner, 1);
-        expect(errors).toEqual(Array(7).fill(expect.any(ConcurrencyError)));
-      });
     });
   });
 
@@ -444,41 +359,6 @@ Emulator.describe("In the Cosmos DB emulator", () => {
 
     afterEach(() => {
       jest.restoreAllMocks();
-    });
-
-    it("should rebuild an aggregate that was written", async () => {
-      // arrange
-      const id = v4();
-      const ar = TestAggregateRoot.create(id, "a name");
-      ar.createSecret("a secret", "plain");
-      ar.recordDetails({ list: [1, undefined, 2], map: { a: undefined } });
-      ar.createMessage("a message"); // imageUrl is undefined
-      ar.changeName("another name");
-
-      // act
-      await repo.writeAsync(ar);
-      const readAr = (await repo.readAsync(id))!;
-
-      // assert
-      expect(ar.getChanges()).toHaveLength(0);
-      expect(ar.getExpectedVersion()).toBe(5);
-      expect(readAr).toBeInstanceOf(TestAggregateRoot);
-      expect(readAr.getChanges()).toHaveLength(0);
-      expect(readAr.state).toEqual({
-        version: 5,
-        id,
-        name: "another name",
-        created: ar.created,
-        secret: "a secret",
-        plain: "plain",
-        messageText: "a message",
-        details: { list: [1, 2], map: {} },
-      });
-    });
-
-    it("should return undefined when nothing has been written for the id", async () => {
-      expect(await repo.readAsync(v4())).toBeUndefined();
-      expect(await repo.readAsync(v4(), key)).toBeUndefined();
     });
 
     it("should not write when there are no changes", async () => {
@@ -736,21 +616,6 @@ Emulator.describe("In the Cosmos DB emulator", () => {
             data: { id, secret: "a secret", plain: "plain" },
           },
         ]);
-      });
-
-      it("should read what was encrypted, with the key", async () => {
-        // arrange
-        const { id } = await createWithSecretAsync(key);
-        const log = jest.spyOn(console, "error").mockImplementation(() => {});
-
-        // act
-        const ar = (await repo.readAsync(id, key))!;
-
-        // assert
-        expect(ar.name).toBe("a name");
-        expect(ar.secret).toBe("a secret");
-        expect(ar.plain).toBe("plain");
-        expect(log).not.toHaveBeenCalled();
       });
 
       it.each([

@@ -10,7 +10,7 @@ The repository is a Yarn 1 workspace, and dev tooling that all packages share is
 - `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
 - `packages/cosmos` (`@es-aggregates/cosmos`) - Stores events in Cosmos DB for NoSQL. Its SDK (`@azure/cosmos`) and core are its peer dependencies
 - `packages/dynamodb` (`@es-aggregates/dynamodb`) - Stores events in DynamoDB. The AWS SDK and core are its peer dependencies
-- `packages/store-tests` (`@es-aggregates/store-tests`) - The test aggregates that the other packages' tests share. It is never published, and it is used as TypeScript source, so it builds nothing
+- `packages/store-tests` (`@es-aggregates/store-tests`) - What the other packages' tests share: the test aggregates, and the tests that every `EventStore` must pass. It is never published, and it is used as TypeScript source, so it builds nothing
 
 ## Key Commands
 
@@ -22,10 +22,11 @@ Run these at the root; they cover every package.
 
 ### Testing
 - Tests are located in each package's `tests/` directory mirroring its `src/` structure
-- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), and only `emulator.test.ts` in `packages/cosmos` needs the Cosmos DB emulator
+- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), and only `emulator.test.ts` and `event-store-contract.test.ts` in `packages/cosmos` need the Cosmos DB emulator
 - Test configuration in each package's `jest.config.js` and in `packages/dynamodb/jest-dynamodb-config.js`
 - `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/cosmos` and `packages/dynamodb` use the build of core, so run `yarn build:tsc` first if core has changed
 - `yarn workspace @es-aggregates/cosmos emulator` - Start the Cosmos DB emulator, with Docker. `docker stop es-cosmos-emulator` stops and removes it. The tests expect it at `COSMOS_EMULATOR_ENDPOINT`, or else at `http://localhost:8081`. If nothing answers there, they are skipped, but if `CI` is set they fail
+- `EventStoreContract` (in `packages/store-tests`) - The tests that every `EventStore` must pass. To run them on a new store, add `"@es-aggregates/store-tests": "*"` to its package's devDependencies, and an `event-store-contract.test.ts` like the one in `packages/cosmos`. If a test fails, fix the store and not the test
 
 ### Publishing & Release
 - `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)

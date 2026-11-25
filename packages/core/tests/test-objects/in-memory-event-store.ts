@@ -11,13 +11,21 @@ export class InMemoryEventStore implements EventStore {
     expectedVersion: number
   ): Promise<void> => {
     const stored = this.storedFor(aggregateId);
-    if (events.some(({ aggregateVersion }) => stored.has(aggregateVersion))) {
-      throw new ConcurrencyError(aggregateId, expectedVersion);
+    const taken = events.find((event) => stored.has(event.aggregateVersion));
+    if (taken !== undefined) {
+      throw new ConcurrencyError(
+        aggregateId,
+        expectedVersion,
+        new Error(`Version ${taken.aggregateVersion} is already stored.`)
+      );
     }
-    for (const event of events) {
-      stored.set(event.aggregateVersion, this.toJson(event));
-    }
-    this.aggregates.set(aggregateId, stored);
+
+    // one that is refused throws here, so before any of them is stored
+    const appended = events.map((event): [number, string] => [
+      event.aggregateVersion,
+      this.toJson(event),
+    ]);
+    this.aggregates.set(aggregateId, new Map([...stored, ...appended]));
   };
 
   public readAsync = async (
@@ -32,10 +40,27 @@ export class InMemoryEventStore implements EventStore {
     return this.aggregates.get(aggregateId) ?? new Map();
   }
 
-  // JSON already leaves out a property that is undefined, but not an array element
+  // JSON already leaves out a property that is undefined, but not an array element. It
+  // would change a value that is not plain, such as a Date, so that is refused
   private toJson(event: IPersistedEvent): string {
-    return JSON.stringify(event, (_, value) =>
-      Array.isArray(value) ? value.filter((x) => x !== undefined) : value
-    );
+    const isPlain = this.isPlain;
+    return JSON.stringify(event, function (name) {
+      // what is passed as the value has already been through its toJSON
+      const value = this[name];
+      if (!isPlain(value)) {
+        throw new Error(`Cannot store the ${name} of ${event.eventType}.`);
+      }
+      return Array.isArray(value)
+        ? value.filter((x) => x !== undefined)
+        : value;
+    });
   }
+
+  private isPlain = (value: unknown): boolean => {
+    if (typeof value === "object" && value !== null) {
+      const prototype = Object.getPrototypeOf(value);
+      return [Object.prototype, Array.prototype].includes(prototype);
+    }
+    return typeof value !== "number" || Number.isFinite(value);
+  };
 }
