@@ -13,6 +13,9 @@ export interface EventStore {
    * those versions is already stored for the aggregate, this rejects with a
    * ConcurrencyError.
    *
+   * Any other rejection can mean that it is not known whether the events were
+   * stored. Then the aggregate must be read again before anything is retried.
+   *
    * Undefined values are not stored, at any depth: a property that holds one is
    * left out, and so is an array element.
    */

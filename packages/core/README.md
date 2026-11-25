@@ -259,7 +259,7 @@ export async function renameUser(
 - A `ConcurrencyError` for a new aggregate means that its id is already in use.
 - The error has `aggregateId`, `expectedVersion`, and `cause`, which is what the database answered.
 - `instanceof` needs a single copy of `@es-aggregates/core` in your app. If you may have more, check `error.name === "ConcurrencyError"`.
-- Any other error is about something else. After one such as a timeout, the events may have been stored, or not. Read the aggregate to find out, before you make the change again.
+- **Any other error can mean that it is not known whether the events were stored.** After a timeout or a lost connection, for example, they may have been, or not. So read the aggregate again before you retry anything. If you make the change again without looking, it can be stored twice.
 
 ## Field encryption
 
@@ -325,6 +325,7 @@ Each event is an `IPersistedEvent`, which is how it is stored: `aggregateId`, `a
 A store keeps this contract, which is in the [doc comments](src/store/event-store.ts) and in the tests that every store must pass:
 
 - An append has events of contiguous versions, and the first is `expectedVersion`. If any of those versions is already stored, or is being stored by someone else, the append is rejected with a `ConcurrencyError` that has a `cause`, and stores nothing.
+- Any other rejection can mean that the outcome is not known: either all of the events were stored, or none. Then the aggregate must be read again before anything is retried. So a store rejects with a `ConcurrencyError` only if it is sure that the append has not stored the version itself.
 - `undefined` is not stored, at any depth. A property that holds it is left out, and so is an array element.
 - Any other value is read back as it was, or is refused: then the append is rejected with another error, and stores nothing. `Date`, `NaN`, `Infinity` and instances of classes must be refused.
 - The events are stored as they were when the append was called. They are not modified.
@@ -410,6 +411,7 @@ In a database:
 - Make the aggregate and the version together a unique key, and insert. Never overwrite.
 - Insert all of the events in one transaction.
 - Find out how the database tells that a key is already taken, and throw a `ConcurrencyError` for that, with the database's error as its `cause`. Throw other errors as they are.
+- Find out whether the database's SDK sends an insert again by itself, if it does not know whether the first one was done. If it was, the key is taken, but by the append itself. That must not become a `ConcurrencyError`.
 - Read until there are no more pages, and sort by version as a number.
 
 ### Run the contract's tests
