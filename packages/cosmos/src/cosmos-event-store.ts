@@ -129,9 +129,9 @@ export class CosmosEventStore implements EventStore {
     // a batch that stored nothing does not throw: only its response tells
     const code = response?.code;
     const operationCodes = this.operationCodes(response?.result);
-    if (code === 409 || operationCodes.includes(409)) {
-      // if an earlier attempt had stored these events, the first one would conflict. So if
-      // a later one does, none of them was stored
+    if ([code, ...operationCodes].some(this.isTaken)) {
+      // if an earlier attempt had stored these events, the first one would have a 409. So
+      // if a later one has that, none of them was stored
       throw operationCodes.indexOf(409) > 0
         ? new ConcurrencyError(aggregateId, expectedVersion, response)
         : this.conflictError(aggregateId, expectedVersion, response);
@@ -185,9 +185,16 @@ export class CosmosEventStore implements EventStore {
   };
 
   /**
-   * An item's key is the aggregate plus the id, which is the version. So a conflict
-   * means that the version is already stored.
+   * An item's key is the aggregate plus the id, which is the version. So a conflict (409)
+   * means that the version is already stored. A 449 means that another request is storing
+   * it, and that this one has failed, because an item takes one write at a time.
+   *
+   * https://learn.microsoft.com/azure/cosmos-db/conceptual-resilient-sdk-applications#http-449
+   * https://github.com/Azure/azure-sdk-for-java/blob/main/sdk/cosmos/azure-cosmos/docs/ErrorCodesAndRetries.md
    */
+  private isTaken = (code?: number | string): boolean =>
+    code === 409 || code === 449;
+
   private isConflict = (error: unknown): boolean => {
     // what items.batch throws has the original error as its cause since version 4.10.1
     // of the SDK; in older versions, only its diagnostics tell the status code
@@ -198,12 +205,12 @@ export class CosmosEventStore implements EventStore {
       thrown?.code,
       thrown?.cause?.code,
       ...requests.map(({ statusCode }) => statusCode),
-    ].includes(409);
+    ].some(this.isTaken);
   };
 
   /**
-   * The error for a version that is already stored. It can be a ConcurrencyError only if it
-   * is known that no earlier attempt of the same append has stored that version.
+   * The error for a version that is taken. It can be a ConcurrencyError only if it is known
+   * that no earlier attempt of the same append has stored that version, or is storing it.
    */
   private conflictError = (
     aggregateId: string,

@@ -109,11 +109,14 @@ describe("CosmosEventStore Tests", () => {
       ).toEqual(versions.slice(0, 100).map((version) => `${version}`));
     });
 
-    describe("when a version is already stored", () => {
+    describe("when a version is already stored, or is being stored", () => {
       it.each([
         [409, 424, 424],
         [424, 409, 424],
         [424, 424, 409],
+        [449, 424, 424],
+        [424, 449, 424],
+        [424, 424, 449],
       ])(
         "should reject with a ConcurrencyError when the operations have %i, %i and %i",
         async (...statusCodes) => {
@@ -136,12 +139,14 @@ describe("CosmosEventStore Tests", () => {
         }
       );
 
-      it.each<[string, Answer]>([
-        ["a message", { status: 409, body: { message: "It is taken." } }],
-        ["no body", { status: 409 }],
+      it.each<[number, string, Answer]>([
+        [409, "a message", { status: 409, body: { message: "It is taken." } }],
+        [409, "no body", { status: 409 }],
+        [449, "a message", { status: 449, body: { message: "Try again." } }],
+        [449, "no body", { status: 449 }],
       ])(
-        "should reject with a ConcurrencyError when the SDK throws a 409 that has %s",
-        async (_, answer) => {
+        "should reject with a ConcurrencyError when the SDK throws a %i that has %s",
+        async (_, __, answer) => {
           // arrange
           const { store } = await setupAsync(answer);
 
@@ -159,22 +164,25 @@ describe("CosmosEventStore Tests", () => {
 
       // what items.batch throws has diagnostics, in all versions of the SDK, and it has
       // the original error as its cause since 4.10.1
-      it.each([
-        ["the error", { code: 409 }],
-        ["its cause", { cause: { code: 409 } }],
+      const placesOf = (code: number): Array<[number, string, object]> => [
+        [code, "the error", { code }],
+        [code, "its cause", { cause: { code } }],
         [
+          code,
           "its diagnostics",
           {
             diagnostics: {
               clientSideRequestStatistics: {
-                gatewayStatistics: [{ statusCode: 429 }, { statusCode: 409 }],
+                gatewayStatistics: [{ statusCode: 429 }, { statusCode: code }],
               },
             },
           },
         ],
-      ])(
-        "should reject with a ConcurrencyError when the 409 is in %s",
-        async (_, properties) => {
+      ];
+
+      it.each([...placesOf(409), ...placesOf(449)])(
+        "should reject with a ConcurrencyError when the %i is in %s",
+        async (_, __, properties) => {
           // arrange
           const { container, store } = await setupAsync();
           const thrown = Object.assign(new Error("from the SDK"), properties);
@@ -189,19 +197,22 @@ describe("CosmosEventStore Tests", () => {
         }
       );
 
-      it("should reject with a ConcurrencyError when the batch itself has a 409", async () => {
-        // arrange
-        const { container, store } = await setupAsync();
-        const response = { code: 409, headers: {} };
-        container.items.batch = () => Promise.resolve(response);
+      it.each([[409], [449]])(
+        "should reject with a ConcurrencyError when the batch itself has a %i",
+        async (code) => {
+          // arrange
+          const { container, store } = await setupAsync();
+          const response = { code, headers: {} };
+          container.items.batch = () => Promise.resolve(response);
 
-        // act
-        const error = await appendAndCatchAsync(store);
+          // act
+          const error = await appendAndCatchAsync(store);
 
-        // assert
-        expect(error).toBeInstanceOf(ConcurrencyError);
-        expect(error.cause).toBe(response);
-      });
+          // assert
+          expect(error).toBeInstanceOf(ConcurrencyError);
+          expect(error.cause).toBe(response);
+        }
+      );
     });
 
     describe("when the SDK sends the batch more than once", () => {
@@ -266,12 +277,38 @@ describe("CosmosEventStore Tests", () => {
         }
       );
 
-      it.each<[string, Answer]>([
-        ["a message", { status: 409, body: { message: "It is taken." } }],
-        ["no body", { status: 409 }],
+      // a 449 can be because the first attempt is not finished yet
+      it.each([
+        [449, 424, 424],
+        [424, 449, 424],
+        [424, 424, 449],
       ])(
-        "should not know whether the events were stored, when the SDK throws a 409 that has %s, after a 503",
-        async (_, answer) => {
+        "should not know whether the events were stored, when the operations have %i, %i and %i after a 503",
+        async (...statusCodes) => {
+          // arrange
+          const store = await setupWithAccountAsync(
+            failover,
+            failure(503),
+            batch(207, ...statusCodes)
+          );
+
+          // act
+          const error = await appendAndCatchAsync(store);
+
+          // assert
+          expectUnknown(error, cosmos.outcomes[0]);
+          expect(cosmos.requests).toHaveLength(2);
+        }
+      );
+
+      it.each<[number, string, Answer]>([
+        [409, "a message", { status: 409, body: { message: "It is taken." } }],
+        [409, "no body", { status: 409 }],
+        [449, "a message", { status: 449, body: { message: "Try again." } }],
+        [449, "no body", { status: 449 }],
+      ])(
+        "should not know whether the events were stored, when the SDK throws a %i that has %s, after a 503",
+        async (_, __, answer) => {
           // arrange
           const store = await setupWithAccountAsync(
             failover,
@@ -333,6 +370,23 @@ describe("CosmosEventStore Tests", () => {
           expect(cosmos.requests).toHaveLength(failures.length + 1);
         }
       );
+
+      it("should reject with a ConcurrencyError when the events are being stored, after a 429", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          {},
+          failure(429),
+          batch(207, 449, 424, 424)
+        );
+
+        // act
+        const error = await appendAndCatchAsync(store);
+
+        // assert
+        expect(error).toBeInstanceOf(ConcurrencyError);
+        expect(error.cause).toBe(cosmos.outcomes[0]);
+        expect(cosmos.requests).toHaveLength(2);
+      });
 
       // the first event is not stored, so that attempt stored none of them
       it.each([
@@ -550,7 +604,6 @@ describe("CosmosEventStore Tests", () => {
         ["412", batch(207, 412, 424, 424), "207 [412, 424, 424]"],
         ["413", batch(207, 424, 413, 424), "207 [424, 413, 424]"],
         ["429", batch(207, 424, 429, 424), "207 [424, 429, 424]"],
-        ["449", batch(207, 424, 424, 449), "207 [424, 424, 449]"],
         ["500", batch(207, 500, 424, 424), "207 [500, 424, 424]"],
         ["503", batch(207, 503, 424, 424), "207 [503, 424, 424]"],
         ["only 424", batch(207, 424, 424, 424), "207 [424, 424, 424]"],
@@ -643,7 +696,6 @@ describe("CosmosEventStore Tests", () => {
         ["412", { status: 412, body: { message: "It has changed." } }],
         ["413", { status: 413, body: { message: "It is too large." } }],
         ["429", { status: 429, body: { message: "There is too much." } }],
-        ["449", { status: 449, body: { message: "Try again." } }],
         ["500", { status: 500, body: { message: "It broke." } }],
         ["503", { status: 503, body: { message: "It is down." } }],
         ["no message", { status: 500 }],
