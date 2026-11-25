@@ -12,7 +12,7 @@ The repository is a Yarn 1 workspace, and dev tooling that all packages share is
 - `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
 - `packages/cosmos` (`@es-aggregates/cosmos`) - Stores events in Cosmos DB for NoSQL. Its SDK (`@azure/cosmos`) and core are its peer dependencies
 - `packages/dynamodb` (`@es-aggregates/dynamodb`) - Stores events in DynamoDB. The AWS SDK and core are its peer dependencies
-- `packages/store-tests` (`@es-aggregates/store-tests`) - What the other packages' tests share: the test aggregates, and the tests that every `EventStore` must pass. It is never published, and it is used as TypeScript source, so it builds nothing
+- `packages/store-tests` (`@es-aggregates/store-tests`) - What the other packages' tests share: the test aggregates, the tests that every `EventStore` must pass, and a `Consumer` that compiles an app which uses a package. It is never published, and it is used as TypeScript source, so it builds nothing
 
 ## Key Commands
 

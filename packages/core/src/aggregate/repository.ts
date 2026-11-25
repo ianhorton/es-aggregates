@@ -4,6 +4,7 @@ import { IEvent } from "../event/models/event";
 import { IPersistedEvent } from "../event/models/persisted-event";
 import { EventStore } from "../store/event-store";
 import { AggregateRoot } from "./aggregate-root";
+import { EncryptedPropsCheck } from "./encrypted-props-check";
 import { decrypt, encrypt, isEncrypted } from "./encryption";
 
 export interface IRepository<T extends AggregateRoot> {
@@ -196,6 +197,11 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       };
 
       persistedEvents.push(persistedEvent);
+
+      // without a key, encryption is off, so there is nothing to warn about
+      if (encryptionKey !== undefined) {
+        new EncryptedPropsCheck(event, persistedEvent).warn();
+      }
     }
 
     await this.store.appendAsync(aggregateId, persistedEvents, expectedVersion);
