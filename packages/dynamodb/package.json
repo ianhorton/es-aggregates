@@ -1,0 +1,45 @@
+{
+  "name": "@es-aggregates/dynamodb",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "scripts": {
+    "prepare": "yarn build",
+    "build": "run-s clean build:tsc",
+    "build:tsc": "tsc -b",
+    "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "preversion": "yarn test",
+    "postversion": "echo \"Version updated to $npm_package_version\""
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ianhorton/es-aggregates.git",
+    "directory": "packages/dynamodb"
+  },
+  "bugs": {
+    "url": "https://github.com/ianhorton/es-aggregates/issues"
+  },
+  "homepage": "https://github.com/ianhorton/es-aggregates#readme",
+  "peerDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.485.0",
+    "@aws-sdk/lib-dynamodb": "^3.485.0",
+    "@aws-sdk/util-dynamodb": "^3.485.0",
+    "@es-aggregates/core": "^2.0.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.485.0",
+    "@aws-sdk/lib-dynamodb": "^3.485.0",
+    "@aws-sdk/util-dynamodb": "^3.485.0",
+    "@es-aggregates/core": "*",
+    "@es-aggregates/store-tests": "*",
+    "@sailplane/logger": "^4.2.0",
+    "es-aggregates-1": "npm:es-aggregates@1.1.1",
+    "uuid": "^8.3.2"
+  }
+}

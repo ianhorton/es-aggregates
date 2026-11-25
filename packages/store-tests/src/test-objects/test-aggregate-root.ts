@@ -1,0 +1,191 @@
+import { AggregateRoot } from "@es-aggregates/core";
+import { v4 } from "uuid";
+import { DummyEntityCreated, TestEntity } from "./test-entity"
+import { TestEntityCreated } from "./events/test-entity-created";
+import { TestAggregateRootNameChanged } from "./events/test-aggregate-root-name-changed";
+import { TestAggregateRootCreated } from "./events/test-aggregate-root-created";
+import { TestDetailsRecorded } from "./events/test-details-recorded";
+import { TestEntityNameChanged } from "./events/test-entity-name-changed";
+import { TestMessageCreated } from "./events/test-message-created";
+import { TestSecretCreated } from "./events/test-secret-created";
+
+export class TestAggregateRoot extends AggregateRoot {
+  private _id: string;
+  public get id(): string {
+    return this._id;
+  }
+
+  private _name: string;
+  public get name(): string {
+    return this._name;
+  }
+
+  private _testEntities: Array<TestEntity> = new Array<TestEntity>();
+  public get testEntities(): Array<TestEntity> {
+    return this._testEntities;
+  }
+
+  private _created: string;
+  public get created(): string {
+    return this._created;
+  }
+
+  private _messageText?: string;
+  public get messageText(): string | undefined {
+    return this._messageText;
+  }
+
+  private _messageImageUrl?: string;
+  public get messageImageUrl(): string | undefined {
+    return this._messageImageUrl;
+  }
+
+  private _secret?: string;
+  public get secret(): string | undefined {
+    return this._secret;
+  }
+
+  private _plain?: string;
+  public get plain(): string | undefined {
+    return this._plain;
+  }
+
+  private _details?: Record<string, unknown>;
+  public get details(): Record<string, unknown> | undefined {
+    return this._details;
+  }
+
+  // everything the events in golden-1.1.1.json build up, in the form the
+  // fixture saves it
+  public get state(): Record<string, unknown> {
+    return {
+      version: this.getExpectedVersion(),
+      id: this._id,
+      name: this._name,
+      created: this._created,
+      messageText: this._messageText,
+      messageImageUrl: this._messageImageUrl,
+      secret: this._secret,
+      plain: this._plain,
+      details: this._details,
+    };
+  }
+
+  constructor() {
+    super();
+
+    this.register(
+      TestAggregateRootCreated.eventType,
+      (e: TestAggregateRootCreated) => {
+        this._id = e.id;
+        this._name = e.name;
+        this._created = e.timestamp;
+      }
+    );
+
+    this.register(
+      TestAggregateRootNameChanged.eventType,
+      (e: TestAggregateRootNameChanged) => {
+        this._id = e.id;
+        this._name = e.name;
+      }
+    );
+
+    this.register(TestEntityCreated.eventType, (e: TestEntityCreated) => {
+      const testEntity = new TestEntity(this.applyChange);
+      testEntity.route(e);
+      this.testEntities.push(testEntity);
+    });
+
+    this.register(
+      TestEntityNameChanged.eventType,
+      (e: TestEntityNameChanged) => {
+        const te = this.testEntities.find((x) => x.id === e.id);
+        if (te) {
+          te.route(e);
+        }
+      }
+    );
+
+    this.register(
+      DummyEntityCreated.eventType,
+      (e: DummyEntityCreated) => {
+      }
+    );
+
+    this.register(TestMessageCreated.eventType, (e: TestMessageCreated) => {
+      this._messageText = e.text;
+      this._messageImageUrl = e.imageUrl;
+    });
+
+    this.register(TestSecretCreated.eventType, (e: TestSecretCreated) => {
+      this._secret = e.secret;
+      this._plain = e.plain;
+    });
+
+    this.register(TestDetailsRecorded.eventType, (e: TestDetailsRecorded) => {
+      this._details = e.details;
+    });
+  }
+
+  public static factory = (): TestAggregateRoot => {
+    return new TestAggregateRoot();
+  };
+
+  public static create = (id: string, name: string): TestAggregateRoot => {
+    const ar = new TestAggregateRoot();
+
+    const fooCreated = new TestAggregateRootCreated(id, name);
+
+    ar.applyChange(fooCreated);
+
+    return ar;
+  };
+
+  public changeName = (newName: string) => {
+    const nameChangedEvent = new TestAggregateRootNameChanged(this.id, newName);
+
+    this._name = newName;
+
+    this.applyChange(nameChangedEvent);
+  };
+
+  public createTestEntity = (name: string): string => {
+    const id = v4();
+    this.applyChange(TestEntity.create(id, name));
+    return id;
+  };
+
+  public createTestEntityTwoEventsToReproPaymentIssue = (
+    name: string
+  ): string => {
+    const id = v4();
+    this.applyChange(TestEntity.create(id, name));
+
+    const te = this.testEntities.find((x) => x.id === id);
+    if (te) {
+      this.applyChange(te.changeName("NewName321"));
+    }
+
+    return id;
+  };
+
+  public createMessage = (text?: string, imageUrl?: string) => {
+    this.applyChange(new TestMessageCreated(this.id, text, imageUrl));
+  };
+
+  public createSecret = (secret?: string, plain?: string) => {
+    this.applyChange(new TestSecretCreated(this.id, secret, plain));
+  };
+
+  public recordDetails = (details: Record<string, unknown>) => {
+    this.applyChange(new TestDetailsRecorded(this.id, details));
+  };
+
+  public changeNameTestEntity = (id: string, name: string) => {
+    const te = this.testEntities.find((x) => x.id === id);
+    if (te) {
+      this.applyChange(te.changeName(name));
+    }
+  };
+}

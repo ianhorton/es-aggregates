@@ -1,0 +1,126 @@
+# Migrating from 1.x
+
+For an app that uses `es-aggregates` 1.x, which stores events in DynamoDB. 2.0 [is not on npm yet](../README.md).
+
+In short: the packages have new names, `Repository` becomes `DynamoRepository`, and a lost race is a `ConcurrencyError`. Your aggregates, your events and your stored data stay as they are.
+
+If you are on a version before 1.1.1, update to that first. This guide compares 2.0 with 1.1.1. Take care if you used encryption before 1.1.0: that release changed how values are encrypted, so neither 1.1 nor 2.0 decrypts what an older version encrypted. They return it as it is stored.
+
+## Steps
+
+### 1. Change the packages
+
+```bash
+npm uninstall es-aggregates
+npm install @es-aggregates/core @es-aggregates/dynamodb \
+  @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb @aws-sdk/util-dynamodb
+```
+
+In 1.x the AWS SDK came with the library. Now it is a peer dependency, as core is, so your app needs all five packages. The SDK must be version 3.485.0 or later. If your app has it already, keep the version that you have.
+
+### 2. Change the imports
+
+| 1.x, from `es-aggregates` | 2.0 |
+| --- | --- |
+| `Repository` | `DynamoRepository`, from `@es-aggregates/dynamodb` |
+| `DynamoDBClient`, `unmarshall` | the same, from `@es-aggregates/dynamodb` |
+| everything else, such as `AggregateRoot`, `Entity`, `EventBase`, `IEvent` and `IRepository` | the same, from `@es-aggregates/core` |
+
+Change them all at once. An aggregate that extends the `AggregateRoot` of 1.x does not fit a repository of 2.0: TypeScript sees two different classes.
+
+### 3. Use DynamoRepository
+
+It takes the same arguments as `Repository` did. This
+
+```typescript
+// users-1.x.ts
+import { DynamoDBClient, Repository } from "es-aggregates";
+
+import { User } from "./user";
+
+export const users = new Repository<User>(
+  "events",
+  () => new User(),
+  new DynamoDBClient({})
+);
+```
+
+becomes this:
+
+```typescript
+// users.ts
+import { DynamoDBClient, DynamoRepository } from "@es-aggregates/dynamodb";
+
+import { User } from "./user";
+
+export const users = new DynamoRepository<User>(
+  "events",
+  () => new User(),
+  new DynamoDBClient({})
+);
+```
+
+The name `Repository` is still there, in core, but its arguments are different: a store, the activator and `debug`. TypeScript tells you if you pass it the old ones. Plain JavaScript does not: the first read or write fails, with `this.store.readAsync is not a function` or the like.
+
+`DynamoRepository` extends that `Repository`, so you can use `Repository<User>` as a type.
+
+### 4. Catch ConcurrencyError
+
+When another write came first, 1.x rejected with the AWS SDK's `TransactionCanceledException`. 2.0 rejects with a `ConcurrencyError`, and the exception is its `cause`.
+
+```typescript
+// save.ts
+import { ConcurrencyError, IRepository } from "@es-aggregates/core";
+
+import { User } from "./user";
+
+export async function saveAsync(
+  users: IRepository<User>,
+  user: User
+): Promise<boolean> {
+  try {
+    await users.writeAsync(user);
+    return true;
+  } catch (error) {
+    // 1.x: error.name === "TransactionCanceledException"
+    if (error instanceof ConcurrencyError) {
+      return false; // read the user again, and then make the change again
+    }
+    throw error;
+  }
+}
+```
+
+- The reasons that became a `ConcurrencyError` are `ConditionalCheckFailed` and `TransactionConflict`. A transaction that was cancelled for any other reason, such as throttling, is still a `TransactionCanceledException`.
+- `CancellationReasons` and the rest are on `error.cause` now.
+- The message is another one. Change log filters and alarms that look for the old message or name.
+
+### 5. Build and test
+
+Compile the app and run its tests. Nothing has to be done to the table.
+
+## Your stored data does not change
+
+2.0 stores the same items as 1.1.1, with the same attributes, in the same table, under the same keys. Encrypted values have the same format. So:
+
+- 2.0 reads what 1.1.1 stored, and 1.1.1 reads what 2.0 stored.
+- You can go back to 1.1.1 at any time.
+- Both can run at once, on the same table and even on the same aggregate. If both write the same version, only one is stored, whichever of them it is.
+
+Why you can trust this: [the tests](../packages/dynamodb/tests/compatibility-1.1.1.test.ts) run the same app on 2.0 and on 1.1.1 as npm has it. They compare the requests that the two send to DynamoDB, which are the same down to the order of the properties, but for a token that the SDK makes up. Each of the two reads what the other wrote, with and without encryption. They read [data that 1.1.1 stored](../packages/dynamodb/tests/golden-1.1.1.test.ts), tampered values included. And they take turns at writing to one aggregate. They run in CI.
+
+## Every other difference
+
+These are small. Most apps will not notice them.
+
+- **Debug logging.** With `debug`, a read logs all of its items once. 1.x logged what it had so far twice for each page. A write no longer logs the answer of DynamoDB.
+- **Which of two errors you get.** If one write has both an event that cannot be encrypted (a property in `encryptedProps` that is not a string) and another that DynamoDB cannot hold (such as a `Date`), 1.x reported whichever event came first. 2.0 encrypts all the events before it converts any, so it reports the encryption error. Neither stores anything.
+- **Private members.** `Repository` has the private members `store` and `appendEventsAsync`, and no longer has `eventTableName`, `dynamoDBClient` and `transactWriteAsync`. So if you extend the repository, do not call a member of your own class `store` or `appendEventsAsync`.
+- **The class's name** is `DynamoRepository`, if you log or compare it.
+- **Deep imports**, such as `es-aggregates/dist/aggregate/repository`, do not work. What you need is exported by the packages.
+- **The AWS SDK** is not installed by the library any more, so do not count on it being there.
+- **New exports** in core: `EventStore` and `ConcurrencyError`.
+
+These have **not** changed: the aggregates, entities and events, `IRepository`, the order in which events are read, encryption, the limit of 100 changes, and the deprecation warning for `super("UserCreated", ["name"])`.
+
+The limits and the values that are altered are the same too. They are in the READMEs now: [of core](../packages/core/README.md) and [of dynamodb](../packages/dynamodb/README.md).

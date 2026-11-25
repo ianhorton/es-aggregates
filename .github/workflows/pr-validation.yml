@@ -11,7 +11,14 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    
+
+    services:
+      # for the tests of packages/cosmos, which wait for it to start
+      cosmos:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:c274ac17c19a5f74dbadbc99f259bc49a8640a03f6789f54d7f76cbfc33ff6b6 # vnext-latest on 2026-11-25
+        ports:
+        - 8081:8081
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -19,7 +26,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: '22.x'
         cache: 'yarn'
         
     - name: Install dependencies
@@ -33,21 +40,45 @@ jobs:
       
     - name: Verify build artifacts
       run: |
-        if [ ! -d "dist" ]; then
-          echo "Build artifacts not found"
-          exit 1
-        fi
-        
-        if [ ! -f "dist/index.js" ] || [ ! -f "dist/index.d.ts" ]; then
-          echo "Required build artifacts missing"
-          exit 1
-        fi
+        for MANIFEST in packages/*/package.json; do
+          PACKAGE=$(dirname "$MANIFEST")
+          
+          # a package whose main is not in dist builds nothing
+          MAIN=$(node -p "require('./$MANIFEST').main ?? ''")
+          if [[ "$MAIN" != *dist/* ]]; then
+            echo "$PACKAGE builds nothing"
+            continue
+          fi
+          
+          if [ ! -d "$PACKAGE/dist" ]; then
+            echo "Build artifacts not found in $PACKAGE"
+            exit 1
+          fi
+          
+          if [ ! -f "$PACKAGE/dist/index.js" ] || [ ! -f "$PACKAGE/dist/index.d.ts" ]; then
+            echo "Required build artifacts missing in $PACKAGE"
+            exit 1
+          fi
+          
+          echo "Build artifacts found in $PACKAGE"
+        done
         
     - name: Check package.json version format
       run: |
-        VERSION=$(node -p "require('./package.json').version")
-        if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
-          echo "Invalid version format: $VERSION"
-          exit 1
-        fi
-        echo "Version format is valid: $VERSION"
+        for MANIFEST in packages/*/package.json; do
+          PACKAGE=$(dirname "$MANIFEST")
+          
+          # a package whose main is not in dist builds nothing
+          MAIN=$(node -p "require('./$MANIFEST').main ?? ''")
+          if [[ "$MAIN" != *dist/* ]]; then
+            echo "$PACKAGE builds nothing"
+            continue
+          fi
+          
+          VERSION=$(node -p "require('./$MANIFEST').version")
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Invalid version format in $PACKAGE: $VERSION"
+            exit 1
+          fi
+          echo "Version format is valid in $PACKAGE: $VERSION"
+        done

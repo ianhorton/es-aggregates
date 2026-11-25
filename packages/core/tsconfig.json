@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src/",
+    "outDir": "dist",
+    "baseUrl": "./",
+    // as in jest.config.js: for store-tests, which imports core by its name
+    "paths": { "@es-aggregates/core": ["src"] }
+  },
+  "include": ["src"]
+}

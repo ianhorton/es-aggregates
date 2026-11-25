@@ -4,42 +4,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns with DynamoDB integration, following Domain-Driven Design (DDD) principles. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
+`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns, following Domain-Driven Design (DDD) principles. It stores events in DynamoDB or Cosmos DB, or in any other database for which there is an `EventStore`. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
+
+The documentation for users is in `README.md`, in the `README.md` of each published package, and in `docs/migrating-from-1.x.md`. Keep it true when behaviour changes, and check that its code samples compile.
+
+The repository is a Yarn 1 workspace, and dev tooling that all packages share is at the root. The packages are:
+- `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
+- `packages/cosmos` (`@es-aggregates/cosmos`) - Stores events in Cosmos DB for NoSQL. Its SDK (`@azure/cosmos`) and core are its peer dependencies
+- `packages/dynamodb` (`@es-aggregates/dynamodb`) - Stores events in DynamoDB. The AWS SDK and core are its peer dependencies
+- `packages/store-tests` (`@es-aggregates/store-tests`) - What the other packages' tests share: the test aggregates, and the tests that every `EventStore` must pass. It is never published, and it is used as TypeScript source, so it builds nothing
 
 ## Key Commands
 
 ### Development
-- `yarn test` - Run the test suite with Jest (uses `--runInBand --detectOpenHandles --forceExit`)
-- `yarn build` - Build the project (runs clean → tsc)
-- `yarn clean` - Remove dist, coverage, and tsconfig build info
+Run these at the root; they cover every package.
+- `yarn test` - Run each package's test suite with Jest, one package at a time (uses `--runInBand --detectOpenHandles --forceExit`). Runs `tsc -b` first, so that no package is tested against an old build of another package
+- `yarn build` - Build every package, in dependency order (runs clean → `tsc -b`). A new package needs an entry in `references` in the root `tsconfig.json`
+- `yarn clean` - Remove dist, coverage, and tsconfig build info from every package
 
 ### Testing
-- Tests are located in the `tests/` directory mirroring the `src/` structure
-- Uses Jest with DynamoDB integration (`@shelf/jest-dynamodb`)
-- Test configuration in `jest.config.js` and `jest-dynamodb-config.js`
+- Tests are located in each package's `tests/` directory mirroring its `src/` structure
+- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), and only `emulator.test.ts` and `event-store-contract.test.ts` in `packages/cosmos` need the Cosmos DB emulator
+- Test configuration in each package's `jest.config.js` and in `packages/dynamodb/jest-dynamodb-config.js`
+- `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/cosmos` and `packages/dynamodb` use the build of core, so run `yarn build:tsc` first if core has changed
+- `yarn workspace @es-aggregates/cosmos emulator` - Start the Cosmos DB emulator, with Docker. `docker stop es-cosmos-emulator` stops and removes it. The tests expect it at `COSMOS_EMULATOR_ENDPOINT`, or else at `http://localhost:8081`. If nothing answers there, they are skipped, but if `CI` is set they fail
+- `EventStoreContract` (in `packages/store-tests`) - The tests that every `EventStore` must pass. To run them on a new store, add `"@es-aggregates/store-tests": "*"` to its package's devDependencies, and an `event-store-contract.test.ts` like the one in `packages/cosmos`. If a test fails, fix the store and not the test
 
 ### Publishing & Release
-- `yarn version --patch` - Creates new patch version (runs tests first)
+- `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)
 - Releases are automated via GitHub Actions (see `.github/workflows/release.yml`)
-- Use GitHub Actions "Release" workflow to create releases with proper semver versioning
+- Use GitHub Actions "Release" workflow to create releases with proper semver versioning (see `.github/RELEASE.md`)
 - Supports patch, minor, major, and prerelease version bumps
+- The Release workflow does not support workspaces yet, and must not be run until it does. Until then, the root `package.json` must have no version, so that the workflow stops before it tags anything, and the packages are `private`, so that they cannot be published
 
 ## Architecture
 
 ### Core Components
 
-**AggregateRoot** (`src/aggregate/aggregate-root.ts`)
+**AggregateRoot** (`packages/core/src/aggregate/aggregate-root.ts`)
 - Abstract base class for domain aggregates
 - Manages event recording and routing internally
 - Tracks expected version for optimistic concurrency
 - Uses EventRecorder for change tracking and EventRouter for event handling
 
-**Repository** (`src/aggregate/repository.ts`)  
-- Generic repository implementation for DynamoDB persistence
+**Repository** (`packages/core/src/aggregate/repository.ts`)  
+- Generic repository implementation that persists events through an `EventStore`
 - Handles event sourcing read/write operations
 - Supports optional field-level encryption
-- Uses DynamoDB transactions for consistency
 - Requires factory function for aggregate instantiation
+
+**EventStore** (`packages/core/src/store/event-store.ts`)
+- Interface that each database's package implements. Its doc comments are the contract
+- Appends all of the events or none of them, and rejects with `ConcurrencyError` (`packages/core/src/store/concurrency-error.ts`) if a version is already stored
+
+**Cosmos DB** (`packages/cosmos/src`)
+- `CosmosEventStore` - The `EventStore` for Cosmos DB. Uses transactional batches for consistency. There is no repository for it: use `new Repository(new CosmosEventStore(container), activator)`
+
+**DynamoDB** (`packages/dynamodb/src`)
+- `DynamoEventStore` - The `EventStore` for DynamoDB. Uses DynamoDB transactions for consistency
+- `DynamoRepository` - A `Repository` with a `DynamoEventStore`. Its constructor is that of `Repository` in 1.x
 
 **Event System**
 - `EventBase` - Base class for domain events with encryption support
@@ -51,9 +74,17 @@ Events are stored with:
 - `aggregateId` (HASH key)
 - `aggregateVersion` (RANGE key) 
 - Uses conditional writes to prevent version conflicts
+- Apps have events that 1.x stored, so what is stored must not change. The tests of `packages/dynamodb` compare it with the published 1.1.1
+
+### Cosmos DB Schema
+Events are stored as items with:
+- `aggregateId` (partition key)
+- `id`, which is the `aggregateVersion` as a string, so that a version can be stored only once
+- Nothing else but the properties of `IPersistedEvent`, and those that Cosmos DB adds (their names start with an underscore)
+- Only values that JSON can hold. Others are refused, so that what is read is what was appended
 
 ### Key Patterns
-- Aggregates register event handlers in constructor using `this.register(EventType.typename, handler)`
+- Aggregates register event handlers in constructor using `this.register(SomeEvent.eventType, handler)`. Events declare `static eventType`; passing the type to `super` is deprecated
 - Domain changes use `this.applyChange(event)` to both apply and record events
 - Repository uses activator pattern - requires factory function that returns new aggregate instance
 - Optimistic concurrency control via version checking
@@ -69,7 +100,7 @@ Events are stored with:
 - **release.yml**: Manual workflow for semantic versioning and publishing
 - Supports patch, minor, major, and prerelease version bumps
 - Creates git tags, GitHub releases, and publishes to npm
-- Requires `NPM_TOKEN` secret for publishing
+- Publishes with OIDC Trusted Publishing, so it needs no `NPM_TOKEN` secret
 ## OO-First Principle
 
 **Business logic belongs with the object it operates on — as a method on the class — not in free-floating helper functions beside it.**
