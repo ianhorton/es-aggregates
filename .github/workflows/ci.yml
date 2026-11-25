@@ -18,7 +18,14 @@ jobs:
     strategy:
       matrix:
         node-version: [22.x, 24.x]
-    
+
+    services:
+      # for the tests of packages/cosmos, which wait for it to start
+      cosmos:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-latest
+        ports:
+        - 8081:8081
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
