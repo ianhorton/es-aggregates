@@ -37,6 +37,12 @@ describe("CosmosEventStore Tests", () => {
     return new CosmosEventStore(cosmos.container);
   };
 
+  // the answer to a request for the account
+  const accountWith = (enableMultipleWriteLocations: boolean): Answer => ({
+    status: 200,
+    body: { id: "account", enableMultipleWriteLocations },
+  });
+
   afterEach(async () => {
     await cosmos.stopAsync();
   });
@@ -242,11 +248,6 @@ describe("CosmosEventStore Tests", () => {
 
       it.each<[string, Account, Answer[]]>([
         ["a 503", failover, [failure(503)]],
-        [
-          "a 503, with more than one write region",
-          { enableMultipleWriteLocations: true },
-          [failure(503)],
-        ],
         ["a 503 and a 429", failover, [failure(503), failure(429)]],
         ["a 429 and a 503", failover, [failure(429), failure(503)]],
         ["a 503 and a 403/3", failover, [failure(503), failure(403, 3)]],
@@ -276,6 +277,29 @@ describe("CosmosEventStore Tests", () => {
           );
         }
       );
+
+      it("should not know whether the events were stored, when they conflict after a 503, with multi-region writes", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          { enableMultipleWriteLocations: true },
+          failure(503),
+          conflict
+        );
+        // the account cannot be read, or else the append would be refused
+        cosmos.accountAnswers.push(failure(500));
+
+        // act
+        const error = await appendAndCatchAsync(store);
+
+        // assert
+        expectUnknown(error, cosmos.outcomes[0]);
+        expect(error.cause.code).toBe(207);
+        expect(cosmos.requests.map(({ path }) => path)).toEqual([
+          "/west/dbs/db/colls/events/docs",
+          "/east/dbs/db/colls/events/docs",
+        ]);
+        expect(cosmos.requests[1].body).toEqual(cosmos.requests[0].body);
+      });
 
       // a 449 can be because the first attempt is not finished yet
       it.each([
@@ -590,6 +614,251 @@ describe("CosmosEventStore Tests", () => {
           await expect(store.appendAsync(id, events, 7)).rejects.toThrow(
             ConcurrencyError
           );
+        }
+      );
+    });
+
+    describe("when it checks the account", () => {
+      const expectRefused = (error: any): void => {
+        expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+        expect(error.message).toBe(
+          'Cannot append events to aggregate "aggregate id", because multi-region writes ' +
+            "are enabled for the Cosmos DB account. With them, two regions can store the " +
+            "same version, and Cosmos DB then keeps only one of the two events."
+        );
+      };
+
+      // four stores that share a client, and answers for an append to each
+      const setupManyAsync = async () => {
+        const { container, store } = await setupAsync(...Array(4).fill(stored));
+        const { client } = container.database;
+        return [
+          store,
+          new CosmosEventStore(container),
+          new CosmosEventStore(client.database("db").container("others")),
+          new CosmosEventStore(client.database("other").container("events")),
+        ];
+      };
+
+      it("should append when there is a single write region", async () => {
+        // arrange
+        const { store } = await setupAsync(stored);
+        cosmos.accountAnswers.push(accountWith(false));
+
+        // act / assert
+        await expect(store.appendAsync(id, events, 7)).resolves.toBeUndefined();
+        expect(cosmos.accountRequests).toBe(1);
+        expect(cosmos.requests).toHaveLength(1);
+      });
+
+      it("should send nothing when multi-region writes are enabled", async () => {
+        // arrange
+        const { store } = await setupAsync(stored);
+        cosmos.accountAnswers.push(accountWith(true));
+
+        // act
+        const error = await appendAndCatchAsync(store);
+
+        // assert
+        expectRefused(error);
+        expect(cosmos.accountRequests).toBe(1);
+        expect(cosmos.requests).toHaveLength(0);
+      });
+
+      it("should send nothing when the SDK knows of two write regions", async () => {
+        // arrange
+        const store = await setupWithAccountAsync(
+          { enableMultipleWriteLocations: true },
+          stored
+        );
+
+        // act
+        const error = await appendAndCatchAsync(store);
+
+        // assert
+        expectRefused(error);
+        expect(cosmos.requests).toHaveLength(0);
+      });
+
+      it("should ask for the account only once for a client", async () => {
+        // arrange
+        const stores = await setupManyAsync();
+        cosmos.accountAnswers.push(accountWith(false), accountWith(true));
+
+        // act
+        for (const store of stores) {
+          await store.appendAsync(id, events, 7);
+        }
+
+        // assert
+        expect(cosmos.accountRequests).toBe(1);
+        expect(cosmos.requests).toHaveLength(4);
+      });
+
+      it("should not ask again after it has refused the account", async () => {
+        // arrange
+        const stores = await setupManyAsync();
+        cosmos.accountAnswers.push(accountWith(true), accountWith(false));
+
+        // act
+        const errors: unknown[] = [];
+        for (const store of stores) {
+          errors.push(await appendAndCatchAsync(store));
+        }
+
+        // assert
+        errors.forEach(expectRefused);
+        expect(cosmos.accountRequests).toBe(1);
+        expect(cosmos.requests).toHaveLength(0);
+      });
+
+      it.each([
+        ["append", false, 4],
+        ["refuse", true, 0],
+      ])(
+        "should ask only once, and then %s, when several appends begin at once",
+        async (_, isRefused, expectedRequests) => {
+          // arrange
+          const stores = await setupManyAsync();
+          cosmos.accountAnswers.push(
+            accountWith(isRefused),
+            accountWith(!isRefused)
+          );
+
+          // act
+          const results = await Promise.all(stores.map(appendAndCatchAsync));
+
+          // assert
+          results.forEach((result) =>
+            isRefused ? expectRefused(result) : expect(result).toBeUndefined()
+          );
+          expect(cosmos.accountRequests).toBe(1);
+          expect(cosmos.requests).toHaveLength(expectedRequests);
+        }
+      );
+
+      it("should ask for each client's account", async () => {
+        // arrange
+        const { store } = await setupAsync(stored);
+        const other = await StubbedCosmos.startAsync([stored]);
+        other.accountAnswers.push(accountWith(true));
+
+        // act
+        const result = await appendAndCatchAsync(store);
+        const otherResult = await appendAndCatchAsync(
+          new CosmosEventStore(other.container)
+        );
+        await other.stopAsync();
+
+        // assert
+        expect(result).toBeUndefined();
+        expectRefused(otherResult);
+        expect(cosmos.accountRequests).toBe(1);
+        expect(other.accountRequests).toBe(1);
+        expect(other.requests).toHaveLength(0);
+      });
+
+      it.each<[string, Answer]>([
+        ["a 401", { status: 401, body: { message: "The key is wrong." } }],
+        ["a 403", { status: 403, body: { message: "It is not allowed." } }],
+        ["a 404", { status: 404, body: { message: "There is none." } }],
+        ["a 429", { status: 429, body: { message: "There is too much." } }],
+        ["a 500", { status: 500, body: { message: "It broke." } }],
+        ["a 500 that is empty", { status: 500 }],
+        ["a 503", { status: 503, body: { message: "It is down." } }],
+        ["a 200 that is empty", { status: 200 }],
+      ])(
+        "should append, and ask again the next time, when the answer is %s",
+        async (_, answer) => {
+          // arrange
+          const { store } = await setupAsync(stored, stored, stored, stored);
+          cosmos.accountAnswers.push(answer, answer, accountWith(false));
+
+          // act
+          const asked: number[] = [];
+          for (let count = 1; count <= 4; count++) {
+            await store.appendAsync(id, events, 7);
+            asked.push(cosmos.accountRequests);
+          }
+
+          // assert
+          expect(asked).toEqual([1, 2, 3, 3]);
+          expect(cosmos.requests).toHaveLength(4);
+        }
+      );
+
+      // without a response, the SDK rejects, but only after 10 seconds. The others are what
+      // it would not do
+      it.each<[string, () => any]>([
+        ["rejects", () => Promise.reject(new Error("socket hang up"))],
+        ["rejects with undefined", () => Promise.reject(undefined)],
+        [
+          "throws",
+          () => {
+            throw new Error("from the SDK");
+          },
+        ],
+        ["returns undefined", () => undefined],
+        ["returns no account", () => Promise.resolve({ resource: undefined })],
+      ])(
+        "should append, and ask again the next time, when the SDK %s",
+        async (_, getDatabaseAccount) => {
+          // arrange
+          const { container, store } = await setupAsync(stored);
+          jest
+            .spyOn(container.database.client, "getDatabaseAccount")
+            .mockImplementationOnce(getDatabaseAccount);
+          cosmos.accountAnswers.push(accountWith(true));
+
+          // act
+          const result = await appendAndCatchAsync(store);
+          const nextResult = await appendAndCatchAsync(store);
+
+          // assert
+          expect(result).toBeUndefined();
+          expectRefused(nextResult);
+          expect(cosmos.requests).toHaveLength(1);
+        }
+      );
+
+      it("should ask only once, and append, when several appends begin at once, but the account cannot be read", async () => {
+        // arrange
+        const stores = await setupManyAsync();
+        cosmos.accountAnswers.push(
+          { status: 403, body: { message: "It is not allowed." } },
+          accountWith(true)
+        );
+
+        // act
+        const results = await Promise.all(stores.map(appendAndCatchAsync));
+        const asked = cosmos.accountRequests;
+        const nextResult = await appendAndCatchAsync(stores[0]);
+
+        // assert
+        expect(results).toEqual(Array(4).fill(undefined));
+        expect(asked).toBe(1);
+        expectRefused(nextResult);
+        expect(cosmos.accountRequests).toBe(2);
+        expect(cosmos.requests).toHaveLength(4);
+      });
+
+      it.each<[string, unknown, IPersistedEvent[]]>([
+        ["the id is not a string", 7, events],
+        ["there are too many events", id, Array(101).fill(event(7))],
+        ["there is a value that is refused", id, [event(7, new Date(0))]],
+        ["there is a name that is refused", id, [{ ...event(7), id } as any]],
+      ])(
+        "should not ask for the account when %s",
+        async (_, anyId, refused) => {
+          // arrange
+          const { store } = await setupAsync(stored);
+
+          // act / assert
+          await expect(
+            store.appendAsync(anyId as string, refused, 7)
+          ).rejects.toThrow();
+          expect(cosmos.accountRequests).toBe(0);
+          expect(cosmos.requests).toHaveLength(0);
         }
       );
     });
@@ -1212,6 +1481,24 @@ describe("CosmosEventStore Tests", () => {
       expect(
         cosmos.requests.map(({ headers }) => headers["x-ms-continuation"])
       ).toEqual([undefined, "after 0", undefined, "after 0"]);
+    });
+
+    it("should read when multi-region writes are enabled, and not ask for the account", async () => {
+      // arrange
+      const { store } = await setupAsync(page([0]), page([0]));
+      cosmos.accountAnswers.push(accountWith(true));
+
+      // act
+      const read = await store.readAsync(id);
+      const asked = cosmos.accountRequests;
+      const error = await store.appendAsync(id, events, 7).catch((e) => e);
+      const readAfterRefusal = await store.readAsync(id);
+
+      // assert
+      expect(read).toStrictEqual([event(0)]);
+      expect(asked).toBe(0);
+      expect(error.message).toContain("multi-region writes are enabled");
+      expect(readAfterRefusal).toStrictEqual([event(0)]);
     });
 
     it("should return an empty array when there are no events", async () => {

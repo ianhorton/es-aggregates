@@ -27,7 +27,9 @@ export interface Account {
 
 /**
  * A container that is not in Cosmos DB, but on a server that records the requests, as
- * the SDK sends them, and that gives each the next answer from a list.
+ * the SDK sends them, and that gives each the next answer from a list. Requests for the
+ * account are only counted. They have a list of their own, and when that is empty, they
+ * get the account.
  *
  * Without an account, the SDK sends each request once. With one, it does what it does in
  * most apps: it finds out which regions the account has, and it sends some requests again,
@@ -66,6 +68,12 @@ export class StubbedCosmos {
   };
 
   public readonly requests: SentRequest[] = [];
+
+  // how many requests there were for the account
+  public accountRequests = 0;
+
+  // the answers to the next ones
+  public readonly accountAnswers: Answer[] = [];
 
   // what the SDK itself returned, or threw, for each batch
   public readonly outcomes: unknown[] = [];
@@ -130,9 +138,15 @@ export class StubbedCosmos {
       return;
     }
 
+    if (request.method === "GET" && request.url === "/") {
+      this.accountRequests++;
+      this.send(this.accountAnswers.shift() ?? this.accountAnswer(), response);
+      return;
+    }
+
     const metadata = this.metadata(request);
     if (metadata !== undefined) {
-      response.writeHead(200).end(JSON.stringify(metadata));
+      this.send({ status: 200, body: metadata }, response);
       return;
     }
 
@@ -142,37 +156,47 @@ export class StubbedCosmos {
       headers: request.headers,
       body: body === "" ? undefined : JSON.parse(body),
     });
-    const answer = this.answers.shift();
-    if (answer === undefined) {
-      response.writeHead(500).end('{"message":"There is no answer left."}');
-    } else if (answer === "hang up") {
-      request.socket.destroy();
-    } else {
-      response.writeHead(answer.status, answer.headers);
-      response.end(
-        answer.body === undefined ? "" : JSON.stringify(answer.body)
-      );
-    }
+    this.send(
+      this.answers.shift() ?? {
+        status: 500,
+        body: { message: "There is no answer left." },
+      },
+      response
+    );
   };
 
-  // what the SDK asks for, besides the items, to find out where to send a request
-  private metadata = ({ method, url }: IncomingMessage): unknown => {
-    if (this.account === undefined || method !== "GET") {
-      return undefined;
+  private send = (answer: Answer, response: ServerResponse): void => {
+    if (answer === "hang up") {
+      response.socket!.destroy();
+      return;
     }
-    if (url === "/") {
-      const [west, east] = ["west", "east"].map((name) => ({
-        name,
-        databaseAccountEndpoint: `${this.endpoint}${name}/`,
-      }));
-      return {
+    response.writeHead(answer.status, answer.headers);
+    response.end(answer.body === undefined ? "" : JSON.stringify(answer.body));
+  };
+
+  private accountAnswer = (): Answer => {
+    const [west, east] = ["west", "east"].map((name) => ({
+      name,
+      databaseAccountEndpoint: `${this.endpoint}${name}/`,
+    }));
+    return {
+      status: 200,
+      body: {
         id: "account",
-        writableLocations: this.account.enableMultipleWriteLocations
+        writableLocations: this.account?.enableMultipleWriteLocations
           ? [west, east]
           : [west],
         readableLocations: [west, east],
         ...this.account,
-      };
+      },
+    };
+  };
+
+  // what the SDK asks for, besides the account and the items, to find out where to send a
+  // request
+  private metadata = ({ method, url }: IncomingMessage): unknown => {
+    if (this.account === undefined || method !== "GET") {
+      return undefined;
     }
     if (url!.endsWith("/colls/events")) {
       return { id: "events", partitionKey: { paths: ["/aggregateId"] } };

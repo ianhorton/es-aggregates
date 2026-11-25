@@ -55,7 +55,17 @@ export interface EventContainer {
       options: { partitionKey: string }
     ): { fetchAll(): Promise<{ resources: unknown[] }> };
   };
+
+  readonly database: {
+    readonly client: {
+      getDatabaseAccount(): Promise<{
+        resource: { enableMultipleWritableLocations: boolean } | undefined;
+      }>;
+    };
+  };
 }
+
+type Client = EventContainer["database"]["client"];
 
 /**
  * Stores events in a container of Cosmos DB for NoSQL. The container must have
@@ -79,10 +89,16 @@ export interface EventContainer {
  * region: with more, two regions can both store the same version, and Cosmos DB then
  * keeps only one of the two events.
  *
- * After any other error, the events may have been stored, or not: read the aggregate again
- * before you retry. One of these errors is for an append that the SDK, by itself, sent more
- * than once, as it can after a 503. Then a version that is already stored can be one that
- * an earlier attempt of the same append has stored, so that is not a ConcurrencyError.
+ * So if multi-region writes are enabled for the account, appends are refused, but reads are
+ * not. The store checks that before the first append with a CosmosClient, and remembers the
+ * answer for that client, so it does not notice if the account is changed later. If the
+ * account cannot be read, the append goes ahead unchecked, and the next one tries again.
+ *
+ * After any error but a ConcurrencyError, the events may have been stored, or not: read the
+ * aggregate again before you retry. One of these errors is for an append that the SDK, by
+ * itself, sent more than once, as it can after a 503. Then a version that is already stored
+ * can be one that an earlier attempt of the same append has stored, so that is not a
+ * ConcurrencyError.
  *
  * A read sorts by aggregateVersion, and fails if that has no range index. If aggregateId
  * has none, the read scans, which costs more. The default indexing policy indexes both.
@@ -92,6 +108,9 @@ export interface EventContainer {
 export class CosmosEventStore implements EventStore {
   // as many operations as a transactional batch can have
   private static readonly maxEvents = 100;
+
+  // for each client, whether multi-region writes are enabled for its account
+  private static readonly answers = new WeakMap<Client, Promise<boolean>>();
 
   constructor(private readonly container: EventContainer) {}
 
@@ -109,6 +128,8 @@ export class CosmosEventStore implements EventStore {
     }
 
     const operations = events.map((event) => this.toOperation(event));
+
+    await this.checkAccountAsync(aggregateId);
 
     let response: Outcome | undefined;
     try {
@@ -182,6 +203,41 @@ export class CosmosEventStore implements EventStore {
         `An aggregate's id must be a string, but this one is ${typeof aggregateId}.`
       );
     }
+  };
+
+  private checkAccountAsync = async (aggregateId: string): Promise<void> => {
+    if (await this.hasMultiRegionWritesAsync()) {
+      throw new Error(
+        `Cannot append events to aggregate "${aggregateId}", because multi-region writes ` +
+          "are enabled for the Cosmos DB account. With them, two regions can store the " +
+          "same version, and Cosmos DB then keeps only one of the two events."
+      );
+    }
+  };
+
+  /**
+   * Reads the account only once for each client, so appends that begin at the same time
+   * wait for the same answer. If it cannot be read, that is false, but is not remembered.
+   */
+  private hasMultiRegionWritesAsync = (): Promise<boolean> => {
+    const { answers } = CosmosEventStore;
+    const { client } = this.container.database;
+
+    let answer = answers.get(client);
+    if (answer === undefined) {
+      answer = this.readAccountAsync(client).catch(() => {
+        answers.delete(client);
+        return false;
+      });
+      answers.set(client, answer);
+    }
+    return answer;
+  };
+
+  private readAccountAsync = async (client: Client): Promise<boolean> => {
+    const { resource } = await client.getDatabaseAccount();
+    // if there is none, this throws too
+    return resource!.enableMultipleWritableLocations;
   };
 
   /**

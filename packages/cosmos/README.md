@@ -107,7 +107,7 @@ export async function renameAsync(id: string, name: string): Promise<void> {
 
 An append is one transactional batch. Each event is an item. Its id is its version, as a string, so a version cannot be stored twice.
 
-In TypeScript, the constructor takes an `EventContainer`, which is exported too. It has only the two methods that the store uses, so the SDK's `Container` is one in an ES module and in CommonJS alike.
+In TypeScript, the constructor takes an `EventContainer`, which is exported too. It has only what the store uses, so the SDK's `Container` is one in an ES module and in CommonJS alike.
 
 ## Consistency
 
@@ -130,6 +130,11 @@ Events that a read missed cannot be overwritten. The next write expects a versio
 **The account must have a single write region.** It can have more regions to read from.
 
 Cosmos DB refuses a version that is already stored, but only in the region that the append goes to. With more than one write region, two of them can store the same version at the same time. Cosmos DB [then keeps one of the two](https://learn.microsoft.com/azure/cosmos-db/conflict-resolution-policies), and the other event, whose append had succeeded, is lost.
+
+So if [multi-region writes](https://learn.microsoft.com/azure/cosmos-db/how-to-manage-database-account#configure-multiple-write-regions) are enabled for the account, an append is rejected with an `Error` that says so, and stores nothing. Reads are not refused.
+
+- The store checks this before the first append with a `CosmosClient`, and remembers the answer for that client. If you enable or disable multi-region writes later, restart the app, because the store does not notice.
+- If the account cannot be read, the append goes ahead unchecked, and the next one tries again. Before that, the SDK itself can try several times, such as for 10 seconds after a lost connection.
 
 ## Limits
 
@@ -162,6 +167,7 @@ A plain object may have any property names, also `id`, `_ts` and `__proto__`.
 - If [it is not known](#when-the-outcome-is-not-known) whether it was the append itself that stored the version, it is an `Error` that says so. It has the same `cause`.
 - A batch that failed for another reason, such as throttling or size, is an `Error`. If the SDK returned a response for it, that is the `cause`, and the message has its status codes. If the SDK threw, the error is passed on as it is.
 - More than 100 events are refused before anything is sent.
+- If [multi-region writes](#one-write-region) are enabled for the account, appends are refused.
 
 ### When the outcome is not known
 

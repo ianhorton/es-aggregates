@@ -128,6 +128,27 @@ Emulator.describe("In the Cosmos DB emulator", () => {
       expect(emulator.pageSizes).toEqual([...Array(10).fill(100), 50]);
     });
 
+    it("should find out, only once, that the account has a single write region", async () => {
+      // arrange
+      const id = v4();
+      const other = new Emulator();
+      const otherStore = new CosmosEventStore(other.container);
+      const ask = jest.spyOn(
+        other.container.database.client,
+        "getDatabaseAccount"
+      );
+
+      // act
+      await otherStore.appendAsync(id, [event(id, 0)], 0);
+      await otherStore.appendAsync(id, [event(id, 1)], 1);
+      other.stop();
+
+      // assert
+      expect(ask).toHaveBeenCalledTimes(1);
+      const { resource } = await ask.mock.results[0].value;
+      expect(resource?.enableMultipleWritableLocations).toBe(false);
+    });
+
     it.each([[undefined], [null], [7]])(
       "should not read or append when the aggregate's id is %p",
       async (notAnId) => {
