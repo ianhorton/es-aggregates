@@ -33,10 +33,22 @@ export abstract class AggregateRoot {
     return this._recorder.getChanges();
   };
 
-  public clearChanges = (): void => {
-    this._expectedVersion =
-      this._expectedVersion + this._recorder.getChangeCount();
-    return this._recorder.reset();
+  /**
+   * Clears the changes, because they are stored, and expects the version after them.
+   *
+   * @param lastVersion the version of the last change that is stored. Those after it were
+   * made while it was being stored, and are kept. Without it, all changes are cleared
+   */
+  public clearChanges = (lastVersion?: number): void => {
+    // the first change has the expected version. That is past lastVersion if something else,
+    // such as the write of another repository, has cleared the changes already
+    const count =
+      typeof lastVersion === "number"
+        ? Math.max(lastVersion + 1 - this._expectedVersion, 0)
+        : this._recorder.getChangeCount();
+
+    this._recorder.removeFirst(count);
+    this._expectedVersion = this._expectedVersion + count;
   };
 
   protected register = (type: string, handler: (e: any) => void) => {

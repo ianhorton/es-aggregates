@@ -30,7 +30,8 @@ export class EventRecorder {
     this._recorded.push(event);
   };
 
-  public reset = (): void => {
-    this._recorded.length = 0;
+  // removes those that were recorded first, from the list that getChanges returns
+  public removeFirst = (count: number): void => {
+    this._recorded.splice(0, count);
   };
 }

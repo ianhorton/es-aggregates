@@ -33,6 +33,13 @@ describe("Compatibility with es-aggregates 1.1.1", () => {
 
   const table = new LocalEventTable();
   const ok: Answer = { status: 200, body: {} };
+  const cancelled: Answer = {
+    status: 400,
+    body: {
+      __type: "com.amazonaws.dynamodb.v20120810#TransactionCanceledException",
+      CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+    },
+  };
 
   let logged: jest.SpyInstance;
   let ivCount: number;
@@ -246,6 +253,97 @@ describe("Compatibility with es-aggregates 1.1.1", () => {
         },
       ]);
       expect(run1.result).toContain("limit of 100");
+    });
+
+    // none of these makes a change during a write
+    it.each<
+      [string, Answer[], (app: App, client: DynamoDBClient) => Promise<any>]
+    >([
+      [
+        "a write is made again after it has failed",
+        [new Error("socket hang up"), ok, ok],
+        async (app, client) => {
+          const repo = app.repository(table.name, client);
+          const ar = app.TestAggregateRoot.create("some id", "0");
+          const error = await repo.writeAsync(ar).catch((e) => e);
+          ar.changeName("1");
+          await repo.writeAsync(ar);
+          ar.changeName("2");
+          await repo.writeAsync(ar);
+          return [error.message, ar.state, ar.getChanges()];
+        },
+      ],
+      [
+        "an object is written twice at once",
+        [ok, cancelled, ok],
+        async (app, client) => {
+          const repo = app.repository(table.name, client);
+          const ar = app.TestAggregateRoot.create("some id", "0");
+          ar.changeName("1");
+          const writes = [repo.writeAsync(ar), repo.writeAsync(ar)];
+          const areRejected = await Promise.all(
+            writes.map((write) =>
+              write.then(
+                () => false,
+                () => true
+              )
+            )
+          );
+          ar.changeName("2");
+          await repo.writeAsync(ar);
+          return [areRejected, ar.state, ar.getChanges()];
+        },
+      ],
+      [
+        "an object is written to two tables at once",
+        [ok, ok, ok, ok],
+        async (app, client) => {
+          const repos = ["a table", "another table"].map((tableName) =>
+            app.repository(tableName, client)
+          );
+          const ar = app.TestAggregateRoot.create("some id", "0");
+          ar.changeName("1");
+          await Promise.all(repos.map((repo) => repo.writeAsync(ar)));
+          ar.changeName("2");
+          await Promise.all(repos.map((repo) => repo.writeAsync(ar)));
+          return [ar.state, ar.getChanges()];
+        },
+      ],
+      [
+        "an app uses the aggregate's own methods",
+        [ok, ok],
+        async (app, client) => {
+          const repo = app.repository(table.name, client);
+          const ar = app.TestAggregateRoot.factory();
+          const [e0, e1, e2, e3] = ["0", "1", "2", "3"].map(
+            (name) =>
+              app.TestAggregateRoot.create("some id", name).getChanges()[0]
+          );
+          ar.initialize([e0]);
+          [[e1, e2], [], [e3]].forEach(ar.initialize);
+          const changes = ar.getChanges();
+          ["4", "5"].forEach(ar.changeName);
+          ar.clearChanges();
+          ar.clearChanges();
+          ["6", "7"].forEach(ar.changeName);
+          const write = repo.writeAsync(ar);
+          ar.clearChanges();
+          await write;
+          ar.changeName("8");
+          await repo.writeAsync(ar);
+          return [ar.state, changes, changes === ar.getChanges()];
+        },
+      ],
+    ])("should be the same when %s", async (_, answers, act) => {
+      // act
+      const [run1, run2] = await runBothAsync(answers, act);
+
+      // assert
+      expect(run2).toEqual(run1);
+      expect(JSON.stringify(run2)).toBe(JSON.stringify(run1));
+
+      // and these are the requests that were to be compared
+      expect(run1.sent).toHaveLength(answers.length);
     });
 
     it.each([
@@ -467,24 +565,6 @@ describe("Compatibility with es-aggregates 1.1.1", () => {
 
     // the rest are quirks: not to be relied on, but 2.0 does not change them
 
-    it("should lose a change that is made during a write", async () => {
-      // arrange
-      const dynamo = new StubbedDynamoDB([ok]);
-      const repo = app.repository(table.name, dynamo.client);
-      const ar = app.TestAggregateRoot.create("some id", "a name");
-
-      // act
-      const write = repo.writeAsync(ar);
-      ar.changeName("changed during the write");
-      await write;
-
-      // assert
-      const [{ body }] = dynamo.requests;
-      expect(JSON.parse(body).TransactItems).toHaveLength(1);
-      expect(ar.getChanges()).toHaveLength(0);
-      expect(ar.getExpectedVersion()).toBe(2);
-    });
-
     it("should expect the version to be the number of events", async () => {
       // arrange
       // versions 1 to 3 are missing
@@ -521,6 +601,58 @@ describe("Compatibility with es-aggregates 1.1.1", () => {
       expect(config.translateConfig).toBeDefined();
       await repo.readAsync("some id");
       expect(config.translateConfig).toBeUndefined();
+    });
+  });
+
+  // the rest are faults of 1.1.1, which 2.0 does not have
+
+  // the version of each of an aggregate's items, and the name in it
+  const storedAsync = async (id: string) => {
+    const items = await table.itemsAsync(id);
+    return items.map(({ aggregateVersion, data }) => [
+      Number(aggregateVersion.N),
+      data.M!.name.S,
+    ]);
+  };
+
+  describe("A change that is made during a write", () => {
+    const runAsync = async (app: App) => {
+      const id = v4();
+      const repo = app.repository(table.name, table.client);
+      const ar = app.TestAggregateRoot.create(id, "before");
+
+      const write = repo.writeAsync(ar);
+      ar.changeName("during");
+      await write;
+      const pending = [...ar.getChanges()];
+      const expectedVersion = ar.getExpectedVersion();
+
+      ar.changeName("after");
+      await repo.writeAsync(ar);
+      return { pending, expectedVersion, stored: await storedAsync(id) };
+    };
+
+    it("should be lost by 1.1.1, which then skips its version", async () => {
+      expect(await runAsync(published)).toEqual({
+        pending: [],
+        expectedVersion: 2,
+        stored: [
+          [0, "before"],
+          [2, "after"],
+        ],
+      });
+    });
+
+    it("should be stored by 2.0, with the next write", async () => {
+      expect(await runAsync(current)).toEqual({
+        pending: [expect.objectContaining({ name: "during" })],
+        expectedVersion: 1,
+        stored: [
+          [0, "before"],
+          [1, "during"],
+          [2, "after"],
+        ],
+      });
     });
   });
 });
