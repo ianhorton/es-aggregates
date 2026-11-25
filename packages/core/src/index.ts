@@ -8,5 +8,5 @@ export * from "./event/models/event";
 export * from "./event/event-router";
 export * from "./event/models/persisted-event";
 
-export { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-export { unmarshall } from "@aws-sdk/util-dynamodb";
+export * from "./store/concurrency-error";
+export * from "./store/event-store";

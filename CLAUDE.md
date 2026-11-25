@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns with DynamoDB integration, following Domain-Driven Design (DDD) principles. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
+`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns, following Domain-Driven Design (DDD) principles. It stores events in DynamoDB, or in any database for which there is an `EventStore`. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
 
-The repository is a Yarn 1 workspace: the library is in `packages/core` (`@es-aggregates/core`), and dev tooling that all packages share is at the root.
+The repository is a Yarn 1 workspace, and dev tooling that all packages share is at the root. The packages are:
+- `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
+- `packages/dynamodb` (`@es-aggregates/dynamodb`) - Stores events in DynamoDB. The AWS SDK and core are its peer dependencies
+- `packages/store-tests` (`@es-aggregates/store-tests`) - The test aggregates that the other packages' tests share. It is never published, and it is used as TypeScript source, so it builds nothing
 
 ## Key Commands
 
@@ -18,9 +21,9 @@ Run these at the root; they cover every package.
 
 ### Testing
 - Tests are located in each package's `tests/` directory mirroring its `src/` structure
-- Uses Jest with DynamoDB integration (`@shelf/jest-dynamodb`)
-- Test configuration in `packages/core/jest.config.js` and `packages/core/jest-dynamodb-config.js`
-- `yarn workspace @es-aggregates/core test` - Run one package's tests
+- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`)
+- Test configuration in each package's `jest.config.js` and in `packages/dynamodb/jest-dynamodb-config.js`
+- `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/dynamodb` use the build of core, so run `yarn build:tsc` first if core has changed
 
 ### Publishing & Release
 - `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)
@@ -40,11 +43,18 @@ Run these at the root; they cover every package.
 - Uses EventRecorder for change tracking and EventRouter for event handling
 
 **Repository** (`packages/core/src/aggregate/repository.ts`)  
-- Generic repository implementation for DynamoDB persistence
+- Generic repository implementation that persists events through an `EventStore`
 - Handles event sourcing read/write operations
 - Supports optional field-level encryption
-- Uses DynamoDB transactions for consistency
 - Requires factory function for aggregate instantiation
+
+**EventStore** (`packages/core/src/store/event-store.ts`)
+- Interface that each database's package implements. Its doc comments are the contract
+- Appends all of the events or none of them, and rejects with `ConcurrencyError` (`packages/core/src/store/concurrency-error.ts`) if a version is already stored
+
+**DynamoDB** (`packages/dynamodb/src`)
+- `DynamoEventStore` - The `EventStore` for DynamoDB. Uses DynamoDB transactions for consistency
+- `DynamoRepository` - A `Repository` with a `DynamoEventStore`. Its constructor is that of `Repository` in 1.x
 
 **Event System**
 - `EventBase` - Base class for domain events with encryption support

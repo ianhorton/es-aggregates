@@ -1,10 +1,10 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-import { Repository } from "../../src";
+import { DynamoRepository } from "../src";
 
 import { TestAggregateRoot } from "@es-aggregates/store-tests";
-import { LocalEventTable, RawItem } from "../test-objects/local-event-table";
+import { LocalEventTable, RawItem } from "./test-objects/local-event-table";
 
 interface GoldenData {
   testEncryptionKey: string;
@@ -17,14 +17,14 @@ interface GoldenData {
 }
 
 const golden: GoldenData = JSON.parse(
-  readFileSync(join(__dirname, "../fixtures/golden-1.1.1.json"), "utf8")
+  readFileSync(join(__dirname, "fixtures/golden-1.1.1.json"), "utf8")
 );
 
 // Events that 1.1.1 has already stored must go on reading back exactly as 1.1.1
 // itself reads them.
 describe("Golden data stored by es-aggregates 1.1.1", () => {
   const table = new LocalEventTable();
-  const repo = new Repository<TestAggregateRoot>(
+  const repo = new DynamoRepository<TestAggregateRoot>(
     table.name,
     TestAggregateRoot.factory,
     table.client

@@ -1,21 +1,8 @@
-import {
-  DynamoDBClient,
-  Put,
-  TransactWriteItem,
-  TransactWriteItemsCommand,
-  TransactWriteItemsInput,
-  TransactWriteItemsOutput,
-} from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  QueryCommand,
-  QueryCommandOutput,
-} from "@aws-sdk/lib-dynamodb";
-import { marshall } from "@aws-sdk/util-dynamodb";
 import { Logger, LogLevel } from "@sailplane/logger";
 
 import { IEvent } from "../event/models/event";
 import { IPersistedEvent } from "../event/models/persisted-event";
+import { EventStore } from "../store/event-store";
 import { AggregateRoot } from "./aggregate-root";
 import { decrypt, encrypt, isEncrypted } from "./encryption";
 
@@ -32,9 +19,8 @@ export interface IRepository<T extends AggregateRoot> {
 
 export class Repository<T extends AggregateRoot> implements IRepository<T> {
   constructor(
-    private readonly eventTableName: string,
+    private readonly store: EventStore,
     private readonly activator: () => T,
-    private readonly dynamoDBClient: DynamoDBClient,
     readonly debug: boolean = false
   ) {
     logger.level = debug ? LogLevel.DEBUG : LogLevel.NONE;
@@ -67,13 +53,12 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     const expectedVersion = aggregate.getExpectedVersion();
     logger.debug("Expected Version.", expectedVersion);
 
-    const output = await this.transactWriteAsync(
+    await this.appendEventsAsync(
       aggregate.id,
       changes,
       expectedVersion,
       encryptionKey
     );
-    logger.debug("Transact Write Items Output.", output);
 
     aggregate.clearChanges();
   };
@@ -168,13 +153,13 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
     return result;
   };
 
-  private transactWriteAsync = async (
+  private appendEventsAsync = async (
     aggregateId: string,
     changes: IEvent[],
     expectedVersion: number,
     encryptionKey?: string
-  ): Promise<TransactWriteItemsOutput> => {
-    const transactWriteItemList: TransactWriteItem[] = [];
+  ): Promise<void> => {
+    const persistedEvents: IPersistedEvent[] = [];
 
     for (let index = 0; index < changes.length; index++) {
       const event = changes[index];
@@ -199,63 +184,22 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
         ),
       };
 
-      const item = marshall(persistedEvent, { removeUndefinedValues: true });
-
-      const put: Put = {
-        TableName: this.eventTableName,
-        ConditionExpression: "attribute_not_exists(aggregateVersion)",
-        Item: item,
-      };
-
-      const transactWriteItem: TransactWriteItem = {
-        Put: put,
-      };
-
-      transactWriteItemList.push(transactWriteItem);
+      persistedEvents.push(persistedEvent);
     }
 
-    const transactWriteItemsInput: TransactWriteItemsInput = {
-      TransactItems: transactWriteItemList,
-    };
-
-    const command = new TransactWriteItemsCommand(transactWriteItemsInput);
-    const documentClient = DynamoDBDocumentClient.from(this.dynamoDBClient);
-    const response = await documentClient.send(command);
-
-    return response;
+    await this.store.appendAsync(aggregateId, persistedEvents, expectedVersion);
   };
 
   private readEventsAsync = async (
     aggregateId: string,
     encryptionKey?: string
   ): Promise<IEvent[]> => {
-    const documentClient = DynamoDBDocumentClient.from(this.dynamoDBClient);
-    const items: Record<string, any>[] = [];
-    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
-
-    do {
-      const response: QueryCommandOutput = await documentClient.send(
-        new QueryCommand({
-          TableName: this.eventTableName,
-          KeyConditionExpression: "aggregateId = :aggregateId",
-          ExpressionAttributeValues: { ":aggregateId": aggregateId },
-          ConsistentRead: true,
-          ScanIndexForward: true,
-          ExclusiveStartKey: lastEvaluatedKey,
-        })
-      );
-      const { Items, LastEvaluatedKey } = response;
-      logger.debug("Retrieved Items.", items)
-      if (Items) items.push(...Items);
-      logger.debug("All Items.", items)
-      lastEvaluatedKey = LastEvaluatedKey;
-    } while (lastEvaluatedKey);
-
-    documentClient.destroy();
+    const items = await this.store.readAsync(aggregateId);
+    logger.debug("All Items.", items);
 
     if (items.length > 0) {
       const events = items.map(
-        ({ eventType, timestamp, encryptedProps, data }: any) => {
+        ({ eventType, timestamp, encryptedProps, data }) => {
           // Scope decryption to the row's faithful marker; within it, the ENC1
           // sentinel on each value decides decrypt-vs-passthrough.
           const decryptedData = this.decryptData(

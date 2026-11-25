@@ -4,11 +4,17 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { v4 } from "uuid";
 
-import { Repository } from "../../src";
-import { encrypt, isEncrypted } from "../../src/aggregate/encryption";
-
+import {
+  ConcurrencyError,
+  encrypt,
+  isEncrypted,
+  Repository,
+} from "@es-aggregates/core";
 import { TestAggregateRoot } from "@es-aggregates/store-tests";
-import { LocalEventTable } from "../test-objects/local-event-table";
+
+import { DynamoRepository } from "../src";
+
+import { LocalEventTable } from "./test-objects/local-event-table";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -21,7 +27,7 @@ Logger.initialize({ level: LogLevel.INFO });
 
 jest.setTimeout(90000);
 
-describe("Repository Tests", () => {
+describe("DynamoRepository Tests", () => {
   it("will fail when we try and create more that 100 changes", () => {
     // arrange
     const id = "id";
@@ -159,7 +165,7 @@ describe("Repository Tests", () => {
     );
 
     // assert
-    // qp-9k9o: encryptedProps is persisted as the FAITHFUL static declaration
+    // encryptedProps is persisted as the FAITHFUL static declaration
     // (scope-only marker); the value itself is a self-describing ENC1 envelope.
     if (Item) {
       expect(Item.encryptedProps).toEqual(["name"]);
@@ -171,7 +177,7 @@ describe("Repository Tests", () => {
 
   it("(f) key absent: writes plaintext + still persists the faithful marker; read does not decrypt", async () => {
     // arrange
-    // qp-9k9o: the marker is SCOPE-ONLY, so it is persisted even with no key.
+    // The marker is SCOPE-ONLY, so it is persisted even with no key.
     // The value has no ENC1 sentinel, so the read path passes it through
     // untouched — presence in the marker never means "is encrypted".
     const { ddbc, id, name, key, repo } = await setupAndExecuteAsync(false);
@@ -393,10 +399,14 @@ describe("Repository Tests", () => {
     const error = await repo.writeAsync(ar2).catch((e) => e);
 
     // assert
-    // the second fails with the error from dynamo
-    expect(error).toBeInstanceOf(TransactionCanceledException);
-    expect(error.name).toBe("TransactionCanceledException");
-    expect(error.CancellationReasons).toMatchObject([
+    // the second fails, because of the error from dynamo
+    expect(error).toBeInstanceOf(ConcurrencyError);
+    expect(error.name).toBe("ConcurrencyError");
+    expect(error.aggregateId).toBe(id);
+    expect(error.expectedVersion).toBe(1);
+    expect(error.cause).toBeInstanceOf(TransactionCanceledException);
+    expect(error.cause.name).toBe("TransactionCanceledException");
+    expect(error.cause.CancellationReasons).toMatchObject([
       { Code: "ConditionalCheckFailed" },
     ]);
 
@@ -436,8 +446,9 @@ describe("Repository Tests", () => {
 
       // assert
       // one reason per event: only the taken version is at fault
-      expect(error).toBeInstanceOf(TransactionCanceledException);
-      expect(error.CancellationReasons).toMatchObject(
+      expect(error).toBeInstanceOf(ConcurrencyError);
+      expect(error.cause).toBeInstanceOf(TransactionCanceledException);
+      expect(error.cause.CancellationReasons).toMatchObject(
         [1, 2, 3].map((version) => ({
           Code: version === takenVersion ? "ConditionalCheckFailed" : "None",
         }))
@@ -477,7 +488,7 @@ describe("Repository Tests", () => {
 
   it("throws at write when an encryptedProps field is not a string (string-only contract)", async () => {
     // arrange
-    // qp-9k9o review #1: encryptedProps is a STRING-ONLY contract. A non-string
+    // encryptedProps is a STRING-ONLY contract. A non-string
     // value must fail loudly at write, not be String()-coerced into
     // "[object Object]" and silently persisted.
     const id = v4();
@@ -657,18 +668,34 @@ describe("Repository Tests", () => {
     );
     expect(readAr.getExpectedVersion()).toBe(6);
   });
+
+  it("should be a Repository, with debug off unless it is turned on", () => {
+    // arrange / act
+    const { repo, table } = setupRepoAndDynamoDB();
+    const debugRepo = new DynamoRepository<TestAggregateRoot>(
+      table.name,
+      TestAggregateRoot.factory,
+      table.client,
+      true
+    );
+
+    // assert
+    expect(repo).toBeInstanceOf(Repository);
+    expect(repo.debug).toBe(false);
+    expect(debugRepo.debug).toBe(true);
+  });
 });
 
 // helper methods
 const setupRepoAndDynamoDB = (): {
   ddbc: DynamoDBClient;
-  repo: Repository<TestAggregateRoot>;
+  repo: DynamoRepository<TestAggregateRoot>;
   table: LocalEventTable;
 } => {
   const table = new LocalEventTable();
   const ddbc = table.client;
 
-  const repo = new Repository<TestAggregateRoot>(
+  const repo = new DynamoRepository<TestAggregateRoot>(
     table.name,
     TestAggregateRoot.factory,
     ddbc
@@ -690,7 +717,7 @@ const setupAndExecuteAsync = async (
   name: string;
   key: string;
   ddbc: DynamoDBClient;
-  repo: Repository<TestAggregateRoot>;
+  repo: DynamoRepository<TestAggregateRoot>;
   table: LocalEventTable;
 }> => {
   const id = v4();
