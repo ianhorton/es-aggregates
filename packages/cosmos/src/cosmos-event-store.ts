@@ -1,24 +1,60 @@
 import {
-  Container,
-  CosmosDiagnostics,
-  CreateOperationInput,
-  ErrorResponse,
-  JSONObject,
-  JSONValue,
-  OperationResponse,
-  Response,
-} from "@azure/cosmos";
-import {
   ConcurrencyError,
   EventStore,
   IPersistedEvent,
 } from "@es-aggregates/core";
 
+type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+
+interface JsonObject {
+  [name: string]: JsonValue;
+}
+
+interface CreateOperation {
+  operationType: "Create";
+  resourceBody: JsonObject;
+}
+
+// what the SDK returns for a batch, or throws
+interface Outcome {
+  code?: number | string;
+  result?: Array<{ statusCode?: number }>;
+  cause?: { code?: number | string };
+  diagnostics?: {
+    clientSideRequestStatistics?: {
+      retryDiagnostics?: { failedAttempts?: SentRequest[] };
+      gatewayStatistics?: SentRequest[];
+    };
+  };
+}
+
 // what the SDK's diagnostics tell about a request that it sent
 interface SentRequest {
   operationType?: string;
-  statusCode?: number;
+  statusCode?: number | string;
   subStatusCode?: number;
+}
+
+/**
+ * What CosmosEventStore uses of a Container from @azure/cosmos. The class itself cannot be
+ * the type of the parameter: the SDK declares it twice, once for ES modules and once for
+ * CommonJS, and as it has private members, TypeScript does not take the one for the other.
+ */
+export interface EventContainer {
+  readonly items: {
+    batch(
+      operations: CreateOperation[],
+      partitionKey: string
+    ): Promise<unknown>;
+
+    query(
+      query: {
+        query: string;
+        parameters: Array<{ name: string; value: string }>;
+      },
+      options: { partitionKey: string }
+    ): { fetchAll(): Promise<{ resources: unknown[] }> };
+  };
 }
 
 /**
@@ -57,7 +93,7 @@ export class CosmosEventStore implements EventStore {
   // as many operations as a transactional batch can have
   private static readonly maxEvents = 100;
 
-  constructor(private readonly container: Container) {}
+  constructor(private readonly container: EventContainer) {}
 
   public appendAsync = async (
     aggregateId: string,
@@ -74,15 +110,17 @@ export class CosmosEventStore implements EventStore {
 
     const operations = events.map((event) => this.toOperation(event));
 
-    let response: Response<OperationResponse[]> | undefined;
+    let response: Outcome | undefined;
     try {
-      response = await this.container.items.batch(operations, aggregateId);
+      response = (await this.container.items.batch(operations, aggregateId)) as
+        | Outcome
+        | undefined;
     } catch (error) {
       if (this.isConflict(error)) {
         throw this.conflictError(
           aggregateId,
           expectedVersion,
-          error as ErrorResponse
+          error as Outcome
         );
       }
       throw error;
@@ -120,7 +158,7 @@ export class CosmosEventStore implements EventStore {
     this.checkId(aggregateId);
 
     const { resources } = await this.container.items
-      .query<JSONObject>(
+      .query(
         {
           query:
             "SELECT * FROM c WHERE c.aggregateId = @aggregateId " +
@@ -131,7 +169,7 @@ export class CosmosEventStore implements EventStore {
       )
       .fetchAll();
 
-    return resources.map((item) => this.toEvent(item));
+    return resources.map((item) => this.toEvent(item as JsonObject));
   };
 
   /**
@@ -153,7 +191,7 @@ export class CosmosEventStore implements EventStore {
   private isConflict = (error: unknown): boolean => {
     // what items.batch throws has the original error as its cause since version 4.10.1
     // of the SDK; in older versions, only its diagnostics tell the status code
-    const thrown = error as ErrorResponse | undefined;
+    const thrown = error as Outcome | undefined;
     const requests =
       thrown?.diagnostics?.clientSideRequestStatistics?.gatewayStatistics ?? [];
     return [
@@ -170,9 +208,9 @@ export class CosmosEventStore implements EventStore {
   private conflictError = (
     aggregateId: string,
     expectedVersion: number,
-    cause?: Response<OperationResponse[]> | ErrorResponse
+    cause?: Outcome
   ): Error =>
-    this.mayHaveBeenStored(cause?.diagnostics)
+    this.mayHaveBeenStored(cause)
       ? Object.assign(
           new Error(
             `It is not known whether the events for aggregate "${aggregateId}" at version ` +
@@ -188,13 +226,12 @@ export class CosmosEventStore implements EventStore {
    * Whether an attempt before the last one may have stored the events. The SDK sends a
    * batch again after some failures that do not tell whether it was stored, such as a 503.
    */
-  private mayHaveBeenStored = (diagnostics?: CosmosDiagnostics): boolean => {
-    const statistics = diagnostics?.clientSideRequestStatistics;
-    const failed: SentRequest[] =
-      statistics?.retryDiagnostics?.failedAttempts ?? [];
+  private mayHaveBeenStored = (outcome?: Outcome): boolean => {
+    const statistics = outcome?.diagnostics?.clientSideRequestStatistics;
+    const failed = statistics?.retryDiagnostics?.failedAttempts ?? [];
     // a failed attempt is here too if the service answered it, and only here it has the
     // substatus
-    const answered: SentRequest[] = statistics?.gatewayStatistics ?? [];
+    const answered = statistics?.gatewayStatistics ?? [];
 
     return (
       failed.filter(this.isBatch).length >
@@ -222,14 +259,14 @@ export class CosmosEventStore implements EventStore {
     (statusCode === 403 && (subStatusCode === 3 || subStatusCode === 1008));
 
   private operationCodes = (
-    result?: OperationResponse[]
+    result?: Outcome["result"]
   ): Array<number | undefined> =>
     Array.isArray(result)
       ? result.map((operation) => operation?.statusCode)
       : [];
 
-  private toOperation = (event: IPersistedEvent): CreateOperationInput => {
-    const item = this.toJson(event, event.eventType) as JSONObject;
+  private toOperation = (event: IPersistedEvent): CreateOperation => {
+    const item = this.toJson(event, event.eventType) as JsonObject;
     const reserved = Object.keys(item).find(this.isReserved);
     if (reserved !== undefined) {
       throw new Error(
@@ -246,9 +283,9 @@ export class CosmosEventStore implements EventStore {
    * A copy of the value that will be read back as it is. It leaves out what
    * DynamoEventStore leaves out: undefined values, and properties that are functions.
    */
-  private toJson = (value: unknown, path: string): JSONValue => {
+  private toJson = (value: unknown, path: string): JsonValue => {
     if (this.isPlainArray(value)) {
-      const copy: JSONValue[] = [];
+      const copy: JsonValue[] = [];
       value.forEach((element, index) => {
         if (element !== undefined) {
           copy.push(this.toJson(element, `${path}[${index}]`));
@@ -259,7 +296,7 @@ export class CosmosEventStore implements EventStore {
 
     if (this.isPlainObject(value)) {
       // it has no prototype, so that __proto__ is a property like any other
-      const copy: JSONObject = Object.create(null);
+      const copy: JsonObject = Object.create(null);
       for (const [name, property] of Object.entries(value)) {
         if (property !== undefined && typeof property !== "function") {
           copy[name] = this.toJson(property, `${path}.${name}`);
@@ -274,7 +311,7 @@ export class CosmosEventStore implements EventStore {
       typeof value === "string" ||
       Number.isFinite(value)
     ) {
-      return value as JSONValue;
+      return value as JsonValue;
     }
 
     throw new Error(
@@ -306,8 +343,8 @@ export class CosmosEventStore implements EventStore {
     return typeof value === "number" ? `${value}` : `a ${typeof value}`;
   };
 
-  private toEvent = (item: JSONObject): IPersistedEvent => {
-    const event: JSONObject = {};
+  private toEvent = (item: JsonObject): IPersistedEvent => {
+    const event: JsonObject = {};
     for (const name of Object.keys(item)) {
       if (!this.isReserved(name)) {
         event[name] = item[name];

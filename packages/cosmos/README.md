@@ -107,6 +107,8 @@ export async function renameAsync(id: string, name: string): Promise<void> {
 
 An append is one transactional batch. Each event is an item. Its id is its version, as a string, so a version cannot be stored twice.
 
+In TypeScript, the constructor takes an `EventContainer`, which is exported too. It has only the two methods that the store uses, so the SDK's `Container` is one in an ES module and in CommonJS alike.
+
 ## Consistency
 
 A read can miss events that were stored shortly before it. What it can miss depends on the [consistency level](https://learn.microsoft.com/azure/cosmos-db/consistency-levels) of the account:
