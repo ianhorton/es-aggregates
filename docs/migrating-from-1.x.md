@@ -107,12 +107,14 @@ Compile the app and run its tests. Nothing has to be done to the table.
 - You can go back to 1.1.1 at any time.
 - Both can run at once, on the same table and even on the same aggregate. If both write the same version, only one is stored, whichever of them it is.
 
-Why you can trust this: [the tests](../packages/dynamodb/tests/compatibility-1.1.1.test.ts) run the same app on 2.0 and on 1.1.1 as npm has it. They compare the requests that the two send to DynamoDB, which are the same down to the order of the properties, but for a token that the SDK makes up. Each of the two reads what the other wrote, with and without encryption. They read [data that 1.1.1 stored](../packages/dynamodb/tests/golden-1.1.1.test.ts), tampered values included. And they take turns at writing to one aggregate. They run in CI.
+Why you can trust this: [the tests](../packages/dynamodb/tests/compatibility-1.1.1.test.ts) run the same app on 2.0 and on 1.1.1 as npm has it. They compare the requests that the two send to DynamoDB, which are the same down to the order of the properties, but for a token that the SDK makes up, and for a [change that is made during a write](#every-other-difference). Each of the two reads what the other wrote, with and without encryption. They read [data that 1.1.1 stored](../packages/dynamodb/tests/golden-1.1.1.test.ts), tampered values included. And they take turns at writing to one aggregate. They run in CI.
 
 ## Every other difference
 
 These are small. Most apps will not notice them.
 
+- **A change that is made during a write** stays in the aggregate, and the next write stores it. 1.x lost it, and then skipped its version.
+- **A new optional parameter.** `clearChanges` of an aggregate takes the version of the last event that is stored, and keeps the changes after it. The repository passes it after a write. If you override the method, pass it on: without it, all the changes are cleared, as in 1.x.
 - **Debug logging.** With `debug`, a read or a write logs ids, event types and versions, and no values. 1.x logged the events with their values, those of a write before they were encrypted, so its logs can have them in plain text. It also logged the answer of DynamoDB to a write. `debug` is now each repository's own setting: in 1.x, the repository that was created last decided for the whole process. So pass `true` to each one that is to log. The messages are other ones, so change log filters that look for them. A format that your app sets with `Logger.initialize` of `@sailplane/logger` applies to the repositories that it creates after that. In 1.x, it had to be set before the library was loaded.
 - **Warnings about `encryptedProps`.** A write with a key logs a warning, with `console.warn`, if an event does not have a property that its `encryptedProps` lists, or if a static `encryptedProps` is not used, because the constructor passes the event's type to `super` and no list. Either can mean that a value is stored as plain text that should be encrypted. 1.x stores the same, but it says nothing. Each warning is logged once per process for each event type (and name), and has no values in it. [Check what is encrypted](../packages/core/README.md#check-what-is-encrypted) tells what to do.
 - **Which of two errors you get.** If one write has both an event that cannot be encrypted (a property in `encryptedProps` that is not a string) and another that DynamoDB cannot hold (such as a `Date`), 1.x reported whichever event came first. 2.0 encrypts all the events before it converts any, so it reports the encryption error. Neither stores anything.
@@ -124,6 +126,6 @@ These are small. Most apps will not notice them.
 - **The AWS SDK** is not installed by the library any more, so do not count on it being there.
 - **New exports** in core: `EventStore`, `ConcurrencyError` and the type [`EncryptedProps`](../packages/core/README.md#check-what-is-encrypted).
 
-These have **not** changed: the aggregates, entities and events, `IRepository`, the order in which events are read, how values are encrypted, the limit of 100 changes, and the deprecation warning for `super("UserCreated", ["name"])`.
+These have **not** changed: the rest of the aggregates, the entities and events, `IRepository`, the order in which events are read, how values are encrypted, the limit of 100 changes, and the deprecation warning for `super("UserCreated", ["name"])`.
 
 The limits and the values that are altered are the same too. They are in the READMEs now: [of core](../packages/core/README.md) and [of dynamodb](../packages/dynamodb/README.md).

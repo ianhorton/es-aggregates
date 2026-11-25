@@ -49,7 +49,8 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
   };
 
   public writeAsync = async (aggregate: T, encryptionKey?: string): Promise<void> => {
-    const changes = aggregate.getChanges();
+    // a copy, because changes that are made during the write are added to the list
+    const changes = [...aggregate.getChanges()];
 
     if (changes.length === 0) {
       this.debugLogger.debug("No changes to write.", {
@@ -72,7 +73,7 @@ export class Repository<T extends AggregateRoot> implements IRepository<T> {
       encryptionKey
     );
 
-    aggregate.clearChanges();
+    aggregate.clearChanges(expectedVersion + changes.length - 1);
   };
 
   /**

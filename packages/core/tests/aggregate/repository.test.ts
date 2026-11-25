@@ -1,4 +1,8 @@
-import { TestAggregateRoot } from "@es-aggregates/store-tests";
+import {
+  InterruptedEventStore,
+  TestAggregateRoot,
+  TestAggregateRootNameChanged,
+} from "@es-aggregates/store-tests";
 
 import {
   ConcurrencyError,
@@ -39,6 +43,12 @@ describe("Repository Tests", () => {
     data: { id, name: `name ${aggregateVersion}` },
     ...event,
   });
+
+  // the version and the name of each event, in each append
+  const appended = (append: ReturnType<typeof setup>["append"]) =>
+    append.mock.calls.map(([, events]) =>
+      events.map(({ aggregateVersion, data }) => [aggregateVersion, data.name])
+    );
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -298,6 +308,248 @@ describe("Repository Tests", () => {
       ]);
       expect(ar.getChanges()).toHaveLength(0);
       expect(ar.getExpectedVersion()).toBe(2);
+    });
+
+    it("should append only the changes that there were when it began", async () => {
+      // arrange
+      const { append, repo } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+      ar.changeName("b");
+
+      // act
+      const write = repo.writeAsync(ar);
+      ar.changeName("c");
+      await write;
+
+      // assert
+      expect(append).toHaveBeenCalledTimes(1);
+      expect(appended(append)).toEqual([
+        [
+          [0, "a"],
+          [1, "b"],
+        ],
+      ]);
+      expect(ar.getChanges()).toMatchObject([{ name: "c" }]);
+      expect(ar.getExpectedVersion()).toBe(2);
+    });
+
+    it("should lose no change, at whatever moment of a write it is made", async () => {
+      const hadBeenCleared: boolean[] = [];
+
+      for (let ticks = 0; ticks < 20; ticks++) {
+        // arrange
+        const { append, repo, store } = setup();
+        const ar = TestAggregateRoot.create(id, "a");
+
+        // act
+        const write = repo.writeAsync(ar);
+        for (let tick = 0; tick < ticks; tick++) {
+          await undefined;
+        }
+        hadBeenCleared.push(!ar.hasChanges());
+        ar.changeName("b");
+        ar.changeName("c");
+        await write;
+        const nextWrite = repo.writeAsync(ar);
+        ar.changeName("d");
+        await nextWrite;
+        await repo.writeAsync(ar);
+
+        // assert
+        expect(appended(append)).toEqual([
+          [[0, "a"]],
+          [
+            [1, "b"],
+            [2, "c"],
+          ],
+          [[3, "d"]],
+        ]);
+        expect(await store.readAsync(id)).toHaveLength(4);
+        expect(ar.hasChanges()).toBe(false);
+        expect(ar.getExpectedVersion()).toBe(4);
+      }
+
+      // the changes were made from the beginning of the write until after its end
+      expect(hadBeenCleared[0]).toBe(false);
+      expect(hadBeenCleared[hadBeenCleared.length - 1]).toBe(true);
+    });
+
+    it("should keep a change of the same event as one that it stores", async () => {
+      // arrange
+      const { append, repo } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+      const event = new TestAggregateRootNameChanged(id, "again");
+      ar["applyChange"](event);
+      ar["applyChange"](event);
+
+      // act
+      const write = repo.writeAsync(ar);
+      ar["applyChange"](event);
+      await write;
+
+      // assert
+      expect(ar.getChanges()).toEqual([event]);
+      expect(ar.getExpectedVersion()).toBe(3);
+
+      // act
+      await repo.writeAsync(ar);
+
+      // assert
+      expect(appended(append)).toEqual([
+        [
+          [0, "a"],
+          [1, "again"],
+          [2, "again"],
+        ],
+        [[3, "again"]],
+      ]);
+    });
+
+    it("should keep a change that is made during a write that cannot be encrypted", async () => {
+      // arrange
+      const { append, repo } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+      ar.createMessage(1 as unknown as string);
+
+      // act
+      const write = repo.writeAsync(ar, key);
+      ar.changeName("b");
+      const error = await write.catch((e) => e);
+
+      // assert
+      expect(error.message).toContain("Cannot encrypt");
+      expect(append).not.toHaveBeenCalled();
+      expect(ar.getChanges()).toMatchObject([
+        { name: "a" },
+        { text: 1 },
+        { name: "b" },
+      ]);
+      expect(ar.getExpectedVersion()).toBe(0);
+    });
+
+    it("should reject the second of two writes that begin at once, and lose nothing", async () => {
+      // arrange
+      const { append, repo } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+
+      // act
+      const first = repo.writeAsync(ar);
+      ar.changeName("b");
+      const second = repo.writeAsync(ar).catch((e) => e);
+      ar.changeName("c");
+      await first;
+      const error = await second;
+
+      // assert
+      expect(error).toBeInstanceOf(ConcurrencyError);
+      expect(error).toMatchObject({ aggregateId: id, expectedVersion: 0 });
+      expect(ar.getChanges()).toMatchObject([{ name: "b" }, { name: "c" }]);
+      expect(ar.getExpectedVersion()).toBe(1);
+
+      // act
+      append.mockClear();
+      await repo.writeAsync(ar);
+
+      // assert
+      expect(appended(append)).toEqual([
+        [
+          [1, "b"],
+          [2, "c"],
+        ],
+      ]);
+      expect(ar.hasChanges()).toBe(false);
+      expect(ar.getExpectedVersion()).toBe(3);
+    });
+
+    it("should reject the first of two writes that begin at once if the second is faster, and lose nothing", async () => {
+      // arrange
+      const { append, repo, store } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+      const slow = new InterruptedEventStore(store, async (moment) => {
+        if (moment === "first") {
+          ar.changeName("b");
+          await repo.writeAsync(ar);
+          ar.changeName("c");
+        }
+      });
+
+      // act
+      const error = await new Repository(slow, TestAggregateRoot.factory)
+        .writeAsync(ar)
+        .catch((e) => e);
+
+      // assert
+      expect(error).toBeInstanceOf(ConcurrencyError);
+      expect(error).toMatchObject({ aggregateId: id, expectedVersion: 0 });
+      expect(ar.getChanges()).toMatchObject([{ name: "c" }]);
+      expect(ar.getExpectedVersion()).toBe(2);
+
+      // act
+      append.mockClear();
+      await repo.writeAsync(ar);
+
+      // assert
+      expect(appended(append)).toEqual([[[2, "c"]]]);
+    });
+
+    // the stores do not know of each other, so both writes succeed
+    it("should clear the changes only once if two repositories store them at once", async () => {
+      // arrange
+      const [one, other] = [setup(), setup()];
+      const ar = TestAggregateRoot.create(id, "a");
+      ar.changeName("b");
+      const slow = new InterruptedEventStore(other.store, async (moment) => {
+        if (moment === "last") {
+          await write;
+          ar.changeName("c");
+        }
+      });
+
+      // act
+      const write = one.repo.writeAsync(ar);
+      await new Repository(slow, TestAggregateRoot.factory).writeAsync(ar);
+
+      // assert
+      expect(ar.getChanges()).toMatchObject([{ name: "c" }]);
+      expect(ar.getExpectedVersion()).toBe(2);
+
+      // act
+      await Promise.all([one, other].map(({ repo }) => repo.writeAsync(ar)));
+
+      // assert
+      for (const { append } of [one, other]) {
+        expect(appended(append)).toEqual([
+          [
+            [0, "a"],
+            [1, "b"],
+          ],
+          [[2, "c"]],
+        ]);
+      }
+      expect(ar.hasChanges()).toBe(false);
+      expect(ar.getExpectedVersion()).toBe(3);
+    });
+
+    it("should keep a change that is made after the app has cleared those of the write", async () => {
+      // arrange
+      const { append, repo } = setup();
+      const ar = TestAggregateRoot.create(id, "a");
+
+      // act
+      const write = repo.writeAsync(ar);
+      ar.clearChanges();
+      ar.changeName("b");
+      await write;
+
+      // assert
+      expect(ar.getChanges()).toMatchObject([{ name: "b" }]);
+      expect(ar.getExpectedVersion()).toBe(1);
+
+      // act
+      await repo.writeAsync(ar);
+
+      // assert
+      expect(appended(append)).toEqual([[[0, "a"]], [[1, "b"]]]);
     });
 
     it("should reject the changes to a copy that is out of date", async () => {

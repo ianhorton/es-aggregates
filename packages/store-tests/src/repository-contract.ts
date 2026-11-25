@@ -6,7 +6,7 @@ import {
 } from "@es-aggregates/core";
 import { v4 } from "uuid";
 
-import { TestAggregateRoot } from "./test-objects";
+import { InterruptedEventStore, TestAggregateRoot } from "./test-objects";
 
 /**
  * The tests of EventStoreContract that use the store through Repository.
@@ -21,6 +21,7 @@ export class RepositoryContract {
       this.defineSaving();
       describe("encryption", () => this.defineEncryption());
       describe("when another save came first", () => this.defineLosing());
+      describe("when it is changed during a save", () => this.defineChanging());
     });
   }
 
@@ -233,13 +234,215 @@ export class RepositoryContract {
     });
   }
 
+  private defineChanging(): void {
+    it.each(InterruptedEventStore.moments)(
+      "should store what is changed at the %s moment with the next save",
+      async (moment) => {
+        // arrange
+        const id = v4();
+        const ar = TestAggregateRoot.create(id, "a");
+        ar.changeName("b");
+        const repo = this.interruptedRepository(moment, () => {
+          ar.changeName("c");
+          ar.changeName("d");
+        });
+
+        // act
+        await repo.writeAsync(ar);
+
+        // assert
+        expect(ar.getChanges()).toMatchObject([{ name: "c" }, { name: "d" }]);
+        expect(ar.getExpectedVersion()).toBe(2);
+        expect(await this.storedAsync(id)).toEqual([
+          [0, "a"],
+          [1, "b"],
+        ]);
+
+        // act
+        await this.repository().writeAsync(ar);
+
+        // assert
+        expect(ar.getChanges()).toHaveLength(0);
+        expect(ar.getExpectedVersion()).toBe(4);
+        expect(await this.storedAsync(id)).toEqual([
+          [0, "a"],
+          [1, "b"],
+          [2, "c"],
+          [3, "d"],
+        ]);
+        expect((await this.repository().readAsync(id))!.name).toBe("d");
+      }
+    );
+
+    it("should store every change once, if there are some at every moment of every save", async () => {
+      // arrange
+      const id = v4();
+      const names = ["0"];
+      const ar = TestAggregateRoot.create(id, "0");
+      const change = () => {
+        names.push(`${names.length}`);
+        ar.changeName(names[names.length - 1]);
+      };
+      const store = new InterruptedEventStore(this.createStore(), change);
+      const repo = new Repository(store, TestAggregateRoot.factory);
+
+      // act
+      for (let saves = 0; saves < 10; saves++) {
+        const save = repo.writeAsync(ar);
+        change();
+        await save;
+      }
+      await this.repository().writeAsync(ar);
+
+      // assert
+      expect(names).toHaveLength(41);
+      expect(await this.storedAsync(id)).toEqual(
+        names.map((name, version) => [version, name])
+      );
+      expect(ar.getChanges()).toHaveLength(0);
+      expect(ar.getExpectedVersion()).toBe(41);
+    });
+
+    it.each(InterruptedEventStore.moments)(
+      "should keep what is changed at the %s moment of a save that is rejected, and all the rest",
+      async (moment) => {
+        // arrange
+        const id = v4();
+        await this.repository().writeAsync(TestAggregateRoot.create(id, "a"));
+        const ar = (await this.repository().readAsync(id))!;
+        const otherAr = (await this.repository().readAsync(id))!;
+        otherAr.changeName("this came first");
+        await this.repository().writeAsync(otherAr);
+        ar.changeName("b");
+        ar.changeName("c");
+        const repo = this.interruptedRepository(moment, () => {
+          ar.changeName("d");
+        });
+
+        // act
+        const error = await repo.writeAsync(ar).catch((e) => e);
+
+        // assert
+        expect(error).toBeInstanceOf(ConcurrencyError);
+        expect(error).toMatchObject({ aggregateId: id, expectedVersion: 1 });
+        expect(ar.getChanges()).toMatchObject([
+          { name: "b" },
+          { name: "c" },
+          { name: "d" },
+        ]);
+        expect(ar.getExpectedVersion()).toBe(1);
+        expect(await this.storedAsync(id)).toEqual([
+          [0, "a"],
+          [1, "this came first"],
+        ]);
+      }
+    );
+
+    it("should store all the changes with the save after one that has failed", async () => {
+      // arrange
+      const id = v4();
+      const ar = TestAggregateRoot.create(id, "a");
+      ar.changeName("b");
+      const repo = this.interruptedRepository("first", () => {
+        ar.changeName("c");
+        throw new Error("The database cannot be reached.");
+      });
+
+      // act
+      const error = await repo.writeAsync(ar).catch((e) => e);
+      await this.repository().writeAsync(ar);
+
+      // assert
+      expect(error.message).toBe("The database cannot be reached.");
+      expect(ar.getChanges()).toHaveLength(0);
+      expect(ar.getExpectedVersion()).toBe(3);
+      expect(await this.storedAsync(id)).toEqual([
+        [0, "a"],
+        [1, "b"],
+        [2, "c"],
+      ]);
+    });
+
+    it.each(InterruptedEventStore.moments)(
+      "should lose no change if it is saved again at the %s moment, and one of the two is rejected",
+      async (moment) => {
+        // arrange
+        const id = v4();
+        const ar = TestAggregateRoot.create(id, "a");
+        let secondSave!: Promise<unknown>;
+        const repo = this.interruptedRepository(moment, () => {
+          ar.changeName("b");
+          secondSave = this.repository()
+            .writeAsync(ar)
+            .catch((e) => e);
+        });
+
+        // act
+        const firstSave = repo.writeAsync(ar).catch((e) => e);
+        const errors = [await firstSave, await secondSave].filter(Boolean);
+
+        // assert
+        // both were to store "a", and either of them can have been the one that did
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toBeInstanceOf(ConcurrencyError);
+        expect(errors[0]).toMatchObject({
+          aggregateId: id,
+          expectedVersion: 0,
+        });
+        const stored = await this.storedAsync(id);
+        expect(ar.getExpectedVersion()).toBe(stored.length);
+        expect([
+          ...stored.map(([, name]) => name),
+          ...ar.getChanges().map((change) => (change as any).name),
+        ]).toEqual(["a", "b"]);
+
+        // act
+        await this.repository().writeAsync(ar);
+
+        // assert
+        expect(ar.getChanges()).toHaveLength(0);
+        expect(ar.getExpectedVersion()).toBe(2);
+        expect(await this.storedAsync(id)).toEqual([
+          [0, "a"],
+          [1, "b"],
+        ]);
+      }
+    );
+  }
+
   private repository(): Repository<TestAggregateRoot> {
     return new Repository(this.createStore(), TestAggregateRoot.factory);
   }
 
+  // one that does something at a moment of every save
+  private interruptedRepository(
+    moment: (typeof InterruptedEventStore.moments)[number],
+    interrupt: () => void
+  ): Repository<TestAggregateRoot> {
+    return new Repository(
+      new InterruptedEventStore(this.createStore(), (each) => {
+        if (each === moment) {
+          interrupt();
+        }
+      }),
+      TestAggregateRoot.factory
+    );
+  }
+
   // the name in each of the aggregate's events
   private async namesAsync(aggregateId: string): Promise<string[]> {
+    const stored = await this.storedAsync(aggregateId);
+    return stored.map(([, name]) => name);
+  }
+
+  // the version of each of the aggregate's events, and the name in it
+  private async storedAsync(
+    aggregateId: string
+  ): Promise<Array<[number, string]>> {
     const events = await this.createStore().readAsync(aggregateId);
-    return events.map(({ data }) => data.name);
+    return events.map(({ aggregateVersion, data }) => [
+      aggregateVersion,
+      data.name,
+    ]);
   }
 }
