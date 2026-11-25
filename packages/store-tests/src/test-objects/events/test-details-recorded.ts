@@ -1,4 +1,4 @@
-import { EventBase } from "../../../src";
+import { EventBase } from "@es-aggregates/core";
 
 // A plain event: it declares no encryptedProps. `details` can hold any kind of
 // value, so tests can pin the DynamoDB type each kind is stored as.

@@ -1,4 +1,4 @@
-import { Entity, EventBase, IEvent } from "../../src"
+import { Entity, EventBase, IEvent } from "@es-aggregates/core"
 import { TestEntityCreated } from "./events/test-entity-created";
 import { TestEntityNameChanged } from "./events/test-entity-name-changed";
 

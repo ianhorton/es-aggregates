@@ -7,7 +7,8 @@ import { v4 } from "uuid";
 import { Repository } from "../../src";
 import { encrypt, isEncrypted } from "../../src/aggregate/encryption";
 
-import { LocalEventTable, TestAggregateRoot } from "../test-objects";
+import { TestAggregateRoot } from "@es-aggregates/store-tests";
+import { LocalEventTable } from "../test-objects/local-event-table";
 import {
   DynamoDBDocumentClient,
   GetCommand,

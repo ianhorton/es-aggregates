@@ -3,7 +3,8 @@ import { join } from "path";
 
 import { Repository } from "../../src";
 
-import { LocalEventTable, RawItem, TestAggregateRoot } from "../test-objects";
+import { TestAggregateRoot } from "@es-aggregates/store-tests";
+import { LocalEventTable, RawItem } from "../test-objects/local-event-table";
 
 interface GoldenData {
   testEncryptionKey: string;

@@ -1,4 +1,4 @@
-import { EventBase } from "../../../src";
+import { EventBase } from "@es-aggregates/core";
 
 
 export class TestAggregateRootNameChanged extends EventBase {

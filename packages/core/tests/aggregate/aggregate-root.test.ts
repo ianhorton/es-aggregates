@@ -3,7 +3,7 @@ import { v4 } from "uuid";
 import {
   TestAggregateRoot,
   TestAggregateRootMissingHandler,
-} from "../test-objects";
+} from "@es-aggregates/store-tests";
 
 describe("AggregateRoot Tests", () => {
   it("should create a new AggregateRoot", () => {

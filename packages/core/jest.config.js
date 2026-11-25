@@ -15,4 +15,8 @@ module.exports = {
   transform: {
     "^.+\\.(ts|tsx)$": "ts-jest",
   },
+  // store-tests must use the source that is being tested, not a built copy of it
+  moduleNameMapper: {
+    "^@es-aggregates/core$": "<rootDir>/src",
+  },
 };

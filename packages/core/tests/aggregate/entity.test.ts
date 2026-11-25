@@ -1,6 +1,6 @@
 import { v4 } from "uuid";
 
-import { TestAggregateRoot } from "../test-objects";
+import { TestAggregateRoot } from "@es-aggregates/store-tests";
 
 describe("Entity Tests", () => {
   it("should create a new Entity", () => {

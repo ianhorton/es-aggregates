@@ -1,4 +1,3 @@
-export * from "./local-event-table";
 export * from "./test-aggregate-root";
 export * from "./test-aggregate-root-missing-handler";
 export * from "./test-entity";

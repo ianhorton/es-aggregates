@@ -1,4 +1,4 @@
-import { EventBase } from "../../../src";
+import { EventBase } from "@es-aggregates/core";
 
 // MessageCreated-shaped: both text and imageUrl are PII (allow-listed for
 // encryption) but any given message populates only one of them.

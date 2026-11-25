@@ -1,4 +1,4 @@
-import { AggregateRoot } from "../../src";
+import { AggregateRoot } from "@es-aggregates/core";
 import { v4 } from "uuid";
 import { DummyEntityCreated, TestEntity } from "./test-entity"
 import { TestEntityCreated } from "./events/test-entity-created";

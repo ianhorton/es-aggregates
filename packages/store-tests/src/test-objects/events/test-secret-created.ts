@@ -1,6 +1,6 @@
-import { EventBase } from "../../../src";
+import { EventBase } from "@es-aggregates/core";
 
-// Uses the NEW static-field declaration form (qp-9k9o). `secret` is PII;
+// Uses the NEW static-field declaration form. `secret` is PII;
 // `plain` is deliberately NOT declared, to prove read-scoping.
 export class TestSecretCreated extends EventBase {
   public static eventType = "TestSecretCreated";

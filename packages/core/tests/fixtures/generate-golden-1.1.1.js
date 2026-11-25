@@ -45,7 +45,7 @@ const { version: sdkVersion } = requireSdk(
   "@aws-sdk/client-dynamodb/package.json"
 );
 
-// The events and aggregate below are those in tests/test-objects, in plain
+// The events and aggregate below are those in packages/store-tests, in plain
 // JavaScript on top of the published package.
 
 class TestAggregateRootCreated extends EventBase {

@@ -1,4 +1,4 @@
-import { AggregateRoot } from "../../src";
+import { AggregateRoot } from "@es-aggregates/core";
 import { TestAggregateRootNameChanged } from "./events/test-aggregate-root-name-changed";
 import { TestAggregateRootCreated } from "./events/test-aggregate-root-created";
 
