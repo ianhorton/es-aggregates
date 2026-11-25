@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "packages/core" }, { "path": "packages/dynamodb" }]
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/cosmos" },
+    { "path": "packages/dynamodb" }
+  ]
 }
