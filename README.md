@@ -6,8 +6,7 @@ A TypeScript library for event-sourced aggregates, following Domain-Driven Desig
 
 ## Features
 
-- Aggregate roots and entities that change state only through events
-- Type-safe event handlers
+- Aggregate roots and entities whose state comes from events
 - Optimistic concurrency: a write that is based on old state is refused, so nothing is overwritten
 - Field-level encryption of the properties that you choose
 - The same aggregates on DynamoDB, Cosmos DB or a store of your own
@@ -138,7 +137,7 @@ yarn build
 yarn test
 ```
 
-`yarn test` runs the tests of every package. The first time, it downloads DynamoDB Local. The tests that need the Cosmos DB emulator are skipped if nothing answers at `http://localhost:8081`. To start it, and to stop it afterwards:
+`yarn test` runs the tests of every package. The first time, it downloads DynamoDB Local. The tests that need the Cosmos DB emulator are skipped if nothing answers at `http://localhost:8081` (but if `CI` is set, they fail). To start it, and to stop it afterwards:
 
 ```bash
 yarn workspace @es-aggregates/cosmos emulator

@@ -49,7 +49,7 @@ export class UserRenamed extends EventBase {
 
 - `eventType` is stored with each event, and it finds the handler when the event is read. So once there are stored events, do not change it.
 - The event's other properties are its data. Use strings, numbers, booleans, `null`, arrays and plain objects. What else can be stored depends on the store. `undefined` is not stored.
-- `timestamp` is when the event was made, in ISO 8601 and in UTC. The order of events comes from their versions, not from it. In a time zone that has daylight saving time, it is up to an hour wrong when the clocks go back, for as long as they repeat. If that matters, run in UTC (`TZ=UTC`).
+- `timestamp` is when the event was made, in ISO 8601 and in UTC. The order of events comes from their versions, not from it. In a time zone that has daylight saving time, an event made in the hour that is repeated when the clocks go back can have a timestamp that is up to an hour wrong. If that matters, run in UTC (`TZ=UTC`).
 - The older form, `super("UserCreated", ["name"])`, still works. It logs a warning, once for each event type.
 
 ## Aggregates
@@ -105,7 +105,7 @@ export class User extends AggregateRoot {
 - `id` must be set by the first event's handler, because the repository stores the events under it.
 - `hasChanges()` and `getChanges()` tell what is not written yet. `getChanges()` returns the aggregate's own list, which a write empties. To use the events after the write, copy the list first: `[...user.getChanges()]`.
 - `getExpectedVersion()` is how many events are stored, as far as the aggregate knows. The first event of an aggregate has version 0.
-- An aggregate can have 100 changes that are not written. The next `applyChange` throws. By then its handler has run, so throw that aggregate away and read it again.
+- Write at least every 100 changes. If there are 100 that are not written, `applyChange` throws. Its handler has run by then, so do not use that object any more.
 
 ## Entities
 
@@ -291,7 +291,7 @@ The values are encrypted with AES-256-GCM. The key can be any string, but it is 
 - Other properties, or a property inside an object or an array. Only the event's own properties can be listed. A name that the event does not have is ignored, so check the spelling.
 - Ids, event types, timestamps, the names of properties, and the length of each value.
 - The aggregate in memory, and what `debug` logs.
-- Against someone who can change what is stored. An encrypted value that was altered is noticed. But it can be replaced by plain text, or by another value that was encrypted with the same key, and that is not noticed.
+- Anything against someone who can change what is stored. If they alter an encrypted value, a read notices, and treats it like one that has the wrong key. But they can replace it by plain text, or by another value that was encrypted with the same key, and that is not noticed.
 
 **Only strings are encrypted.** If a listed property has another kind of value, a write with a key is rejected, and stores nothing. `undefined` and `null` are left as they are.
 

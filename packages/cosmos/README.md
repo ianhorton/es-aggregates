@@ -121,7 +121,7 @@ A read can miss events that were stored shortly before it. What it can miss depe
 - Use one `CosmosClient` for the whole process. The session belongs to it.
 - A client [can only weaken](https://learn.microsoft.com/azure/cosmos-db/how-to-manage-consistency#override-the-default-consistency-level) the account's level. So with a Strong account, leave it out. An account with Consistent prefix or Eventual cannot give you Session.
 
-A read that missed events cannot do any harm. The next write expects a version that is already stored, so it is rejected with a `ConcurrencyError`, and stores nothing. Then [read and try again](../core/README.md#concurrencyerror-and-how-to-retry). Wait a little first, because the next read may miss the same events.
+Events that a read missed cannot be overwritten. The next write expects a version that is already stored, so it is rejected with a `ConcurrencyError`, and stores nothing. Then [read and try again](../core/README.md#concurrencyerror-and-how-to-retry). Wait a little first, because the next read may miss the same events.
 
 ## One write region
 
