@@ -1,4 +1,7 @@
-import { TestAggregateRoot } from "@es-aggregates/store-tests";
+import {
+  InterruptedEventStore,
+  TestAggregateRoot,
+} from "@es-aggregates/store-tests";
 import { LogFormat, LogLevel } from "@sailplane/logger";
 import { inspect } from "node:util";
 import { v4 } from "uuid";
@@ -361,5 +364,91 @@ describe("Debug logging of Repository", () => {
       expect(lines()).toMatchObject([["repository:", "Read items.", {}]]);
       expect(leaked()).toEqual([]);
     });
+
+    describe.each(InterruptedEventStore.moments)(
+      "when the aggregate is changed at the %s moment of a write",
+      (moment) => {
+        // changes with every kind of value that the test aggregate has
+        const change = (ar: TestAggregateRoot): void => {
+          ar.changeName(newSecret());
+          ar.createSecret(newSecret(), newSecret());
+          ar.createMessage(newSecret(), newSecret());
+          ar.recordDetails({ list: [newSecret()], map: { a: newSecret() } });
+        };
+
+        // one that changes the aggregate at that moment of each write
+        const createChangingRepo = (ar: TestAggregateRoot) => {
+          const interrupted = new InterruptedEventStore(store, (each) => {
+            if (each === moment) {
+              change(ar);
+            }
+          });
+          return new Repository(interrupted, TestAggregateRoot.factory, true);
+        };
+
+        const typesOf = (events: { eventType: string }[]): string[] =>
+          events.map(({ eventType }) => eventType);
+
+        const line = (expectedVersion: number, eventTypes: string[]) => [
+          "repository:",
+          "Writing changes.",
+          { aggregateId: id, expectedVersion, eventTypes },
+        ];
+
+        it.each([
+          ["encrypted", true, 7],
+          ["not encrypted", false, 0],
+        ])(
+          "should log none of them in that write or the next one when the values are %s",
+          async (_, isWithKey, encrypted) => {
+            // arrange
+            const key = isWithKey ? newSecret() : undefined;
+            const ar = createAggregate();
+            const repo = createChangingRepo(ar);
+            const written = typesOf(ar.getChanges());
+
+            // act
+            await repo.writeAsync(ar, key);
+            const pending = typesOf(ar.getChanges());
+            await repo.writeAsync(ar, key);
+
+            // assert
+            expect(pending).toHaveLength(4);
+            expect(typesOf(await store.readAsync(id))).toEqual([
+              ...written,
+              ...pending,
+            ]);
+            expect(await envelopesAsync()).toHaveLength(encrypted);
+            expect(lines()).toEqual([
+              line(0, written),
+              line(written.length, pending),
+            ]);
+            expect(leaked()).toEqual([]);
+          }
+        );
+
+        it.each([
+          ["encrypted", true],
+          ["not encrypted", false],
+        ])(
+          "should log none of them, nor the error, when the store rejects values that are %s",
+          async (_, isWithKey) => {
+            // arrange
+            const key = isWithKey ? newSecret() : undefined;
+            const ar = createAggregate();
+            const repo = createChangingRepo(ar);
+            const written = typesOf(ar.getChanges());
+            const error = new Error(newSecret());
+            jest.spyOn(store, "appendAsync").mockRejectedValue(error);
+
+            // act / assert
+            await expect(repo.writeAsync(ar, key)).rejects.toBe(error);
+            expect(ar.getChanges()).toHaveLength(written.length + 4);
+            expect(lines()).toEqual([line(0, written)]);
+            expect(leaked()).toEqual([]);
+          }
+        );
+      }
+    );
   });
 });

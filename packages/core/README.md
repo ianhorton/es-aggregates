@@ -103,7 +103,7 @@ export class User extends AggregateRoot {
 - When an aggregate is read, its handlers get plain objects that have the properties of the events. They are not instances of the event classes, so do not call methods on them.
 - An event that has no handler is an error, both in `applyChange` and when the aggregate is read. So keep the handlers of old events.
 - `id` must be set by the first event's handler, because the repository stores the events under it.
-- `hasChanges()` and `getChanges()` tell what is not written yet. `getChanges()` returns the aggregate's own list, which a write empties. To use the events after the write, copy the list first: `[...user.getChanges()]`.
+- `hasChanges()` and `getChanges()` tell what is not written yet. `getChanges()` returns the aggregate's own list, from which a write removes what it has stored. To use the events after the write, copy the list first: `[...user.getChanges()]`.
 - `getExpectedVersion()` is how many events are stored, as far as the aggregate knows. The first event of an aggregate has version 0.
 - Write at least every 100 changes. If there are 100 that are not written, `applyChange` throws. Its handler has run by then, so do not use that object any more.
 
@@ -218,8 +218,9 @@ The arguments are:
 
 Take care with these:
 
-- **Wait for each write before you change the aggregate again.** A change that is made during a write is not stored. And the next write of that object then skips a version. After that, every write of that aggregate is rejected with a `ConcurrencyError`.
-- **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version, so a gap has the same effect.
+- **A change that is made during a write is not stored by that write.** The aggregate keeps it, and the next write stores it.
+- **Wait for each write of an object before you write it again.** Two writes at once try to store the same changes, so one of them is rejected with a `ConcurrencyError`. Nothing is lost by that: when both are over, the object still has the changes that neither of them has stored, so write it once more. Do not make the changes again, or they can be stored twice.
+- **Never delete one of an aggregate's events, and do not let them expire.** The repository takes the number of events as the next version. So if there is a gap and one version is missing, every write of that aggregate is rejected with a `ConcurrencyError`. If several are missing, the next event can be stored inside the gap, so before older events, and it is only later that every write is rejected.
 - **`debug` logs the ids of aggregates**, and the types and versions of their events. So if an id must not get into your logs, because it is an email address for example, leave `debug` off. It logs no other value of an event, and no key. Each repository has its own setting, which does not affect the others.
 
 ## ConcurrencyError and how to retry
@@ -255,7 +256,7 @@ export async function renameUser(
 }
 ```
 
-- Writing the same object again does not help: its version is still taken.
+- Writing the same object again does not help: its version is still taken. The exception is an object that [was written twice at once](#repository).
 - A `ConcurrencyError` for a new aggregate means that its id is already in use.
 - The error has `aggregateId`, `expectedVersion`, and `cause`, which is what the database answered.
 - `instanceof` needs a single copy of `@es-aggregates/core` in your app. If you may have more, check `error.name === "ConcurrencyError"`.

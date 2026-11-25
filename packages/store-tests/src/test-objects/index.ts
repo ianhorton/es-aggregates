@@ -1,3 +1,4 @@
+export * from "./interrupted-event-store";
 export * from "./test-aggregate-root";
 export * from "./test-aggregate-root-missing-handler";
 export * from "./test-entity";
