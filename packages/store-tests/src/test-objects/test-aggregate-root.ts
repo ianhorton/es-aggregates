@@ -75,7 +75,7 @@ export class TestAggregateRoot extends AggregateRoot {
     super();
 
     this.register(
-      TestAggregateRootCreated.typename,
+      TestAggregateRootCreated.eventType,
       (e: TestAggregateRootCreated) => {
         this._id = e.id;
         this._name = e.name;
@@ -84,21 +84,21 @@ export class TestAggregateRoot extends AggregateRoot {
     );
 
     this.register(
-      TestAggregateRootNameChanged.typename,
+      TestAggregateRootNameChanged.eventType,
       (e: TestAggregateRootNameChanged) => {
         this._id = e.id;
         this._name = e.name;
       }
     );
 
-    this.register(TestEntityCreated.typename, (e: TestEntityCreated) => {
+    this.register(TestEntityCreated.eventType, (e: TestEntityCreated) => {
       const testEntity = new TestEntity(this.applyChange);
       testEntity.route(e);
       this.testEntities.push(testEntity);
     });
 
     this.register(
-      TestEntityNameChanged.typename,
+      TestEntityNameChanged.eventType,
       (e: TestEntityNameChanged) => {
         const te = this.testEntities.find((x) => x.id === e.id);
         if (te) {
@@ -108,12 +108,12 @@ export class TestAggregateRoot extends AggregateRoot {
     );
 
     this.register(
-      DummyEntityCreated.typename,
+      DummyEntityCreated.eventType,
       (e: DummyEntityCreated) => {
       }
     );
 
-    this.register(TestMessageCreated.typename, (e: TestMessageCreated) => {
+    this.register(TestMessageCreated.eventType, (e: TestMessageCreated) => {
       this._messageText = e.text;
       this._messageImageUrl = e.imageUrl;
     });

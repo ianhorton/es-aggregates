@@ -17,7 +17,7 @@ export class TestAggregateRootMissingHandler extends AggregateRoot {
     super();
 
     this.register(
-      TestAggregateRootCreated.typename,
+      TestAggregateRootCreated.eventType,
       (e: TestAggregateRootCreated) => {
         this._id = e.id;
         this._name = e.name;

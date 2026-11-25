@@ -21,13 +21,13 @@ export class TestEntity extends Entity {
   constructor(applier: (e: IEvent) => void) {
     super(applier);
 
-    this.register(TestEntityCreated.typename, (e: TestEntityCreated) => {
+    this.register(TestEntityCreated.eventType, (e: TestEntityCreated) => {
       this._id = e.id;
       this._name = e.name;
     });
 
     this.register(
-      TestEntityNameChanged.typename,
+      TestEntityNameChanged.eventType,
       (e: TestEntityNameChanged) => {
         this._name = e.name;
       }
@@ -63,7 +63,7 @@ class DummyEntity extends Entity {
   constructor(applier: (e: IEvent) => void) {
     super(applier);
 
-    this.register(DummyEntityCreated.typename, (e: DummyEntityCreated) => {
+    this.register(DummyEntityCreated.eventType, (e: DummyEntityCreated) => {
       this._id = e.id;
       this._name = e.name;
     });
@@ -77,8 +77,9 @@ class DummyEntity extends Entity {
 
 
 export class DummyEntityCreated extends EventBase {
-  public static typename = "DummyEntityCreated";
+  public static eventType = "DummyEntityCreated";
+
   constructor(public readonly id: string, public readonly name: string) {
-    super(DummyEntityCreated.typename);
+    super();
   }
 }

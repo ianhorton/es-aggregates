@@ -23,6 +23,21 @@ class LegacyEvent extends EventBase {
   }
 }
 
+class LegacyNoEncrypted extends EventBase {
+  constructor(public readonly foo: string) {
+    super("LegacyNoEnc");
+  }
+}
+
+// Both forms at once.
+class LegacyAndStatic extends EventBase {
+  public static eventType = "LegacyAndStaticField";
+  public static encryptedProps = ["foo"];
+  constructor(public readonly foo: string, public readonly bar: string) {
+    super("LegacyAndStaticArg", ["bar"]);
+  }
+}
+
 // Misconfigured: neither a static eventType nor a constructor arg.
 class BrokenEvent extends EventBase {
   constructor() {
@@ -31,6 +46,10 @@ class BrokenEvent extends EventBase {
 }
 
 describe("EventBase (qp-9k9o dual-support)", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("(e) reads eventType + encryptedProps from static class fields (new form)", () => {
     const e = new StaticEvent("x");
     expect(e.eventType).toBe("StaticEventUnique");
@@ -60,6 +79,49 @@ describe("EventBase (qp-9k9o dual-support)", () => {
     );
     expect(warnsForType).toHaveLength(1);
     warnSpy.mockRestore();
+  });
+
+  it("legacy form leaves encryptedProps undefined when not passed", () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const e = new LegacyNoEncrypted("x");
+
+    expect(e.eventType).toBe("LegacyNoEnc");
+    expect(e.encryptedProps).toBeUndefined();
+    expect(typeof e.timestamp).toBe("string");
+  });
+
+  it("legacy form warns about each type, static form about none", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    class First extends EventBase {
+      constructor() {
+        super("LegacyFirst");
+      }
+    }
+    class Second extends EventBase {
+      constructor() {
+        super("LegacySecond", ["foo"]);
+      }
+    }
+
+    new First();
+    new Second();
+    new First();
+    new StaticEvent("x");
+
+    expect(warnSpy.mock.calls).toEqual([
+      [expect.stringContaining('"LegacyFirst"')],
+      [expect.stringContaining('"LegacySecond"')],
+    ]);
+  });
+
+  it("legacy constructor args win over static class fields", () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const e = new LegacyAndStatic("x", "y");
+
+    expect(e.eventType).toBe("LegacyAndStaticArg");
+    expect(e.encryptedProps).toEqual(["bar"]);
   });
 
   it("throws when neither a static eventType nor a constructor arg is provided", () => {
