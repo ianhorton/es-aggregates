@@ -22,9 +22,10 @@ Run these at the root; they cover every package.
 
 ### Testing
 - Tests are located in each package's `tests/` directory mirroring its `src/` structure
-- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`)
+- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), and only `emulator.test.ts` in `packages/cosmos` needs the Cosmos DB emulator
 - Test configuration in each package's `jest.config.js` and in `packages/dynamodb/jest-dynamodb-config.js`
 - `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/cosmos` and `packages/dynamodb` use the build of core, so run `yarn build:tsc` first if core has changed
+- `yarn workspace @es-aggregates/cosmos emulator` - Start the Cosmos DB emulator, with Docker. `docker stop es-cosmos-emulator` stops and removes it. The tests expect it at `COSMOS_EMULATOR_ENDPOINT`, or else at `http://localhost:8081`. If nothing answers there, they are skipped, but if `CI` is set they fail
 
 ### Publishing & Release
 - `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)

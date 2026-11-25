@@ -10,6 +10,7 @@
     "build": "run-s clean build:tsc",
     "build:tsc": "tsc -b",
     "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
+    "emulator": "docker run -d --rm --name es-cosmos-emulator -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-latest",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "preversion": "yarn test",
     "postversion": "echo \"Version updated to $npm_package_version\""

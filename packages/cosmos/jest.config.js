@@ -13,4 +13,6 @@ module.exports = {
   transform: {
     "^.+\\.(ts|tsx)$": "ts-jest",
   },
+  // finds out whether the emulator is running
+  globalSetup: "<rootDir>/tests/global-setup.ts",
 };
