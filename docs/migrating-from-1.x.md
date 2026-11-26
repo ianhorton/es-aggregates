@@ -1,6 +1,6 @@
 # Migrating from 1.x
 
-For an app that uses `es-aggregates` 1.x, which stores events in DynamoDB. 2.0 [is not on npm yet](../README.md).
+For an app that uses `es-aggregates` 1.x, which stores events in DynamoDB.
 
 In short: the packages have new names, `Repository` becomes `DynamoRepository`, and a lost race is a `ConcurrencyError`. Your aggregates, your events and your stored data stay as they are.
 

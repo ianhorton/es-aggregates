@@ -14,8 +14,6 @@ Aggregates, events, `Repository`, and the `EventStore` interface. There is no da
 
 ## Install
 
-2.0 is [not on npm yet](../../README.md).
-
 ```bash
 npm install @es-aggregates/core
 ```
