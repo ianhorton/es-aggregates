@@ -5,10 +5,10 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
-  # Lets the Release workflow trigger these checks on a bump branch via
-  # `gh workflow run` (GITHUB_TOKEN can dispatch — workflow_dispatch is the
-  # documented exception to the no-recursion rule), so an auto-merge release
-  # PR opened by the bot still gets its required checks. See release.yml.
+  # Lets the Prepare release workflow trigger these checks on its release branch
+  # via `gh workflow run` (GITHUB_TOKEN can dispatch — workflow_dispatch is the
+  # documented exception to the no-recursion rule), so the release PR opened by
+  # the bot still gets its required checks. See prepare-release.yml.
   workflow_dispatch:
 
 jobs:
