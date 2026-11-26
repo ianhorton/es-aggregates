@@ -1,0 +1,81 @@
+name: Prepare release
+
+# Sets the version to release in core, dynamodb and cosmos, and opens a pull
+# request to main with it. It never merges. After the merge, the Publish
+# workflow publishes the packages. See .github/RELEASE.md.
+
+run-name: Prepare release ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to release, of the form X.Y.Z, such as 2.0.0'
+        required: true
+        type: string
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the branch
+      pull-requests: write  # open the pull request
+      actions: write        # start CI and PR Validation on the branch
+    env:
+      VERSION: ${{ inputs.version }}
+      BRANCH: release/v${{ inputs.version }}
+
+    steps:
+    - name: Check that this runs from main
+      run: |
+        if [ "$GITHUB_REF" != refs/heads/main ]; then
+          echo "::error::Run Prepare release from main, not from $GITHUB_REF."
+          exit 1
+        fi
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+
+    - name: Check the version, and set it in the packages
+      # see scripts/release.js for what it checks
+      run: node scripts/release.js prepare "$VERSION"
+
+    - name: Commit it on a new branch
+      run: |
+        if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+          echo "::error::$BRANCH is on GitHub already. If its pull request is open, review and merge that. Otherwise delete the branch, and run Prepare release again."
+          exit 1
+        fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git checkout -b "$BRANCH"
+        git commit --all --message "chore: release v$VERSION"
+        git push origin "$BRANCH"
+
+    - name: Open the pull request
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        cat > "$RUNNER_TEMP/body.md" << EOF
+        Sets the version of @es-aggregates/core, @es-aggregates/dynamodb and @es-aggregates/cosmos to $VERSION, and removes "private" from their package.json, so that they can be published. Nothing else changes.
+
+        The Prepare release workflow opened this pull request, and started CI and PR Validation on its branch, as a pull request that a workflow opens starts no workflows.
+
+        After the merge, the next step is the Publish workflow: run it from main, and approve it in the npm environment. It publishes the three packages to npm, tags the release v$VERSION, and creates the GitHub release.
+        EOF
+        URL=$(gh pr create --base main --head "$BRANCH" --title "chore: release v$VERSION" --body-file "$RUNNER_TEMP/body.md")
+        echo "Opened $URL. Review and merge it, then run Publish." >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Start CI and PR Validation on the branch
+      # main needs their checks (validate, test (22.x) and test (24.x)), and a
+      # pull request that is opened with GITHUB_TOKEN starts no workflows
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh workflow run ci.yml --ref "$BRANCH"
+        gh workflow run pr-validation.yml --ref "$BRANCH"
