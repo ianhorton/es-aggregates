@@ -2,7 +2,7 @@
 
 A TypeScript library for event-sourced aggregates, following Domain-Driven Design (DDD) principles. An aggregate is stored as the list of events that happened to it, and is read by replaying them. The events can be in DynamoDB, in Cosmos DB, or in any other database that you write a store for.
 
-> **This is the README of 2.0, which is not on npm yet.** npm has 1.x, as `es-aggregates`: see [the README of 1.1.1](https://github.com/ianhorton/es-aggregates/blob/v1.1.1/README.md).
+> **This is the README of 2.0.** For `es-aggregates` 1.x, see [the README of 1.1.1](https://github.com/ianhorton/es-aggregates/blob/v1.1.1/README.md).
 
 ## Features
 

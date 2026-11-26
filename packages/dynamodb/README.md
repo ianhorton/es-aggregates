@@ -6,8 +6,6 @@ If you are on 1.x, see [Migrating from 1.x](../../docs/migrating-from-1.x.md). W
 
 ## Install
 
-2.0 is [not on npm yet](../../README.md).
-
 ```bash
 npm install @es-aggregates/core @es-aggregates/dynamodb \
   @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb @aws-sdk/util-dynamodb

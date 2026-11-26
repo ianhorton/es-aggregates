@@ -14,8 +14,6 @@ Stores the events of [`@es-aggregates/core`](../core/README.md) in Azure Cosmos 
 
 ## Install
 
-2.0 is [not on npm yet](../../README.md).
-
 ```bash
 npm install @es-aggregates/core @es-aggregates/cosmos @azure/cosmos
 ```
