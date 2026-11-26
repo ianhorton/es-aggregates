@@ -4,6 +4,11 @@ name: Publish
 # dynamodb and cosmos, tags the commit, and creates the GitHub release. It skips
 # what is done already, so it is safe to run again after a failure, and it never
 # publishes anything twice. See .github/RELEASE.md.
+#
+# It has two jobs, so that the job that can publish runs no code from the
+# packages' dependencies. build installs, builds, tests and packs the packages,
+# but cannot publish. publish waits for approval, and then publishes what build
+# packed, with nothing but npm, git and gh.
 
 on:
   workflow_dispatch:
@@ -13,18 +18,19 @@ concurrency:
   group: publish
   cancel-in-progress: false
 
+env:
+  # in the order in which they are published, as the adapters need core
+  PACKAGES: packages/core packages/dynamodb packages/cosmos
+
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    # which waits for approval, and which only main may use. The trusted
-    # publishers on npm name it, and this file
-    environment: npm
+    # it runs the code of every dependency (yarn install, the build and the
+    # tests), so it can only read the repository, and it cannot publish
     permissions:
-      contents: write  # push the tag, and create the GitHub release
-      id-token: write  # publish to npm with trusted publishing (OIDC)
-    env:
-      # in the order in which they are published, as the adapters need core
-      PACKAGES: packages/core packages/dynamodb packages/cosmos
+      contents: read  # check out the code
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     services:
       # for the tests of packages/cosmos, which wait for it to start
@@ -45,17 +51,7 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '24.x'
-        registry-url: 'https://registry.npmjs.org'
         # and no cache, as npm advises for a build that is published
-
-    - name: Check npm
-      # trusted publishing needs npm 11.5.1 or later
-      run: |
-        NPM_VERSION=$(npm --version)
-        if [ "$(printf '%s\n' 11.5.1 "$NPM_VERSION" | sort -V | head -n 1)" != 11.5.1 ]; then
-          echo "::error::Trusted publishing needs npm 11.5.1 or later, and this is npm $NPM_VERSION."
-          exit 1
-        fi
 
     - name: Checkout code
       # the commit of main that the run started on, also when the run is run
@@ -77,27 +73,114 @@ jobs:
     - name: Run tests
       run: yarn test
 
-    - name: Publish to npm
-      # each package that is not on npm yet. With --ignore-scripts, as npm
-      # publish would run the prepare script, which builds again: so it publishes
-      # what was built and tested above
-      env:
-        VERSION: ${{ steps.version.outputs.version }}
+    - name: Pack the packages
+      # with --ignore-scripts, as npm pack would run the prepare script, which
+      # builds again: so it packs what was built and tested above. npm names
+      # each file after the package and its version, such as
+      # es-aggregates-core-2.0.0.tgz
+      run: |
+        mkdir "$RUNNER_TEMP/packages"
+        for FOLDER in $PACKAGES; do
+          (cd "$FOLDER" && npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/packages")
+        done
+
+    - name: Upload the packages
+      # for publish, also when only publish is run again
+      uses: actions/upload-artifact@v4
+      with:
+        name: packages
+        path: ${{ runner.temp }}/packages
+        if-no-files-found: error
+        # longer than the 30 days in which publish can wait for approval, or
+        # the run can be run again. A repository's settings can lower it
+        retention-days: 90
+
+  publish:
+    # so that it waits for approval only once the tests have passed
+    needs: build
+    runs-on: ubuntu-latest
+    # which waits for approval, and which only main may use. The trusted
+    # publishers on npm name it, and this file
+    environment: npm
+    # any program that runs in this job could publish to npm under our names, so
+    # it installs nothing, builds nothing and runs no tests
+    permissions:
+      contents: write  # push the tag, and create the GitHub release
+      id-token: write  # publish to npm with trusted publishing (OIDC)
+    env:
+      # that build checked
+      VERSION: ${{ needs.build.outputs.version }}
+
+    steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Check npm
+      # trusted publishing needs npm 11.5.1 or later
+      run: |
+        NPM_VERSION=$(npm --version)
+        if [ "$(printf '%s\n' 11.5.1 "$NPM_VERSION" | sort -V | head -n 1)" != 11.5.1 ]; then
+          echo "::error::Trusted publishing needs npm 11.5.1 or later, and this is npm $NPM_VERSION."
+          exit 1
+        fi
+
+    - name: Checkout code
+      # the commit that build built and tested, also when the run is run again.
+      # For scripts/release.js, which uses no package, and for the tag
+      uses: actions/checkout@v4
+
+    - name: Download the packages
+      # that build packed
+      uses: actions/download-artifact@v4
+      with:
+        name: packages
+        path: ${{ runner.temp }}/packages
+
+    - name: Check the packages
+      # that the file of each package holds that package, at that version,
+      # before any of them is published
       run: |
         for FOLDER in $PACKAGES; do
           NAME=$(node -p "require('./$FOLDER/package.json').name")
+          FILE=$RUNNER_TEMP/packages/$(echo "${NAME#@}" | tr / -)-$VERSION.tgz
+          if [ ! -f "$FILE" ]; then
+            echo "::error::build packed no $FILE."
+            exit 1
+          fi
+          # the package.json in the file, which is what npm publish reads
+          FOUND=$(tar -xzOf "$FILE" package/package.json | node -p 'const json = JSON.parse(require("fs").readFileSync(0, "utf8")); json.name + "@" + json.version')
+          if [ "$FOUND" != "$NAME@$VERSION" ]; then
+            echo "::error::$FILE holds $FOUND, and not $NAME@$VERSION."
+            exit 1
+          fi
+          echo "$FILE holds $NAME@$VERSION"
+        done
+
+    - name: Publish to npm
+      # each package that is not on npm yet, from the file that build packed.
+      # npm takes the name, the version and the rest of package.json from the
+      # file, and runs no script for a file. It runs in the folder of the files,
+      # outside the repository, so that no .npmrc or package.json of the
+      # repository changes what it does
+      run: |
+        for FOLDER in $PACKAGES; do
+          NAME=$(node -p "require('./$FOLDER/package.json').name")
+          FILE=$(echo "${NAME#@}" | tr / -)-$VERSION.tgz
           # yes or no, and it fails if npm answers anything but the version or 404
           ON_NPM=$(node scripts/release.js on-npm "$NAME" "$VERSION")
           if [ "$ON_NPM" = yes ]; then
             echo "$NAME@$VERSION is on npm already"
           else
-            (cd "$FOLDER" && npm publish --access public --provenance --ignore-scripts)
+            (cd "$RUNNER_TEMP/packages" && npm publish "./$FILE" --access public --provenance)
           fi
         done
 
     - name: Tag the commit that was published
       env:
-        TAG: v${{ steps.version.outputs.version }}
+        TAG: v${{ needs.build.outputs.version }}
       run: |
         COMMIT=$(git rev-parse HEAD)
         # the commit of the tag on GitHub, if it is there: that of an annotated
@@ -116,7 +199,6 @@ jobs:
     - name: Create the GitHub release
       env:
         GH_TOKEN: ${{ github.token }}
-        VERSION: ${{ steps.version.outputs.version }}
       run: |
         if gh release view "v$VERSION" > /dev/null; then
           echo "The release v$VERSION is on GitHub already"
