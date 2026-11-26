@@ -1,7 +1,7 @@
 name: Publish
 
-# Publishes to npm the version that the Prepare release workflow has set in core,
-# dynamodb and cosmos, tags the commit, and creates the GitHub release. It skips
+# Tags the commit, publishes to npm the version that the Prepare release workflow
+# has set in core, dynamodb and cosmos, and creates the GitHub release. It skips
 # what is done already, so it is safe to run again after a failure, and it never
 # publishes anything twice. See .github/RELEASE.md.
 #
@@ -159,6 +159,27 @@ jobs:
           echo "$FILE holds $NAME@$VERSION"
         done
 
+    - name: Tag the commit that is about to be published
+      # before Publish to npm, so that the three packages of a version are all
+      # published from the same commit: a run on another commit stops here,
+      # before it publishes anything
+      env:
+        TAG: v${{ needs.build.outputs.version }}
+      run: |
+        COMMIT=$(git rev-parse HEAD)
+        # the commit of the tag on GitHub, if it is there: that of an annotated
+        # tag is on the line of TAG^{}, which comes last
+        REFS=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+        TAGGED=$(echo "$REFS" | tail -n 1 | cut -f 1)
+        if [ -z "$TAGGED" ]; then
+          git push origin "$COMMIT:refs/tags/$TAG"
+        elif [ "$TAGGED" != "$COMMIT" ]; then
+          echo "::error::$TAG is on $TAGGED, and not on $COMMIT, which this run checked out. If an earlier run of Publish tagged $TAGGED, re-run that run instead; if none of the three packages is on npm at $VERSION yet, you can delete $TAG on GitHub, and run Publish again."
+          exit 1
+        else
+          echo "$TAG is on $COMMIT already"
+        fi
+
     - name: Publish to npm
       # each package that is not on npm yet, from the file that build packed.
       # npm takes the name, the version and the rest of package.json from the
@@ -177,24 +198,6 @@ jobs:
             (cd "$RUNNER_TEMP/packages" && npm publish "./$FILE" --access public --provenance)
           fi
         done
-
-    - name: Tag the commit that was published
-      env:
-        TAG: v${{ needs.build.outputs.version }}
-      run: |
-        COMMIT=$(git rev-parse HEAD)
-        # the commit of the tag on GitHub, if it is there: that of an annotated
-        # tag is on the line of TAG^{}, which comes last
-        REFS=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
-        TAGGED=$(echo "$REFS" | tail -n 1 | cut -f 1)
-        if [ -z "$TAGGED" ]; then
-          git push origin "$COMMIT:refs/tags/$TAG"
-        elif [ "$TAGGED" != "$COMMIT" ]; then
-          echo "::error::$TAG is on $TAGGED, and not on $COMMIT, which this run checked out. If an earlier run of Publish tagged $TAGGED, re-run that run instead."
-          exit 1
-        else
-          echo "$TAG is on $COMMIT already"
-        fi
 
     - name: Create the GitHub release
       env:
