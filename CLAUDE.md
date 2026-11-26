@@ -12,6 +12,7 @@ The repository is a Yarn 1 workspace, and dev tooling that all packages share is
 - `packages/core` (`@es-aggregates/core`) - The library. It must not depend on a database's SDK
 - `packages/cosmos` (`@es-aggregates/cosmos`) - Stores events in Cosmos DB for NoSQL. Its SDK (`@azure/cosmos`) and core are its peer dependencies
 - `packages/dynamodb` (`@es-aggregates/dynamodb`) - Stores events in DynamoDB. The AWS SDK and core are its peer dependencies
+- `packages/postgres` (`@es-aggregates/postgres`) - Stores events in PostgreSQL. `pg` (node-postgres) and core are its peer dependencies. It loads neither pg nor its types: it takes anything that has pg's `query`
 - `packages/store-tests` (`@es-aggregates/store-tests`) - What the other packages' tests share: the test aggregates, the tests that every `EventStore` must pass, and a `Consumer` that compiles an app which uses a package. It is never published, and it is used as TypeScript source, so it builds nothing
 
 ## Key Commands
@@ -24,10 +25,11 @@ Run these at the root; they cover every package.
 
 ### Testing
 - Tests are located in each package's `tests/` directory mirroring its `src/` structure
-- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), and only `emulator.test.ts` and `event-store-contract.test.ts` in `packages/cosmos` need the Cosmos DB emulator
+- Uses Jest. Only the tests of `packages/dynamodb` need DynamoDB (`@shelf/jest-dynamodb`), only `emulator.test.ts` and `event-store-contract.test.ts` in `packages/cosmos` need the Cosmos DB emulator, and only `event-store-contract.test.ts` and the tests "in Postgres" of `postgres-event-store.test.ts` in `packages/postgres` need Postgres
 - Test configuration in each package's `jest.config.js` and in `packages/dynamodb/jest-dynamodb-config.js`
-- `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/cosmos` and `packages/dynamodb` use the build of core, so run `yarn build:tsc` first if core has changed
+- `yarn workspace @es-aggregates/core test` - Run one package's tests. Those of `packages/cosmos`, `packages/dynamodb` and `packages/postgres` use the build of core, so run `yarn build:tsc` first if core has changed
 - `yarn workspace @es-aggregates/cosmos emulator` - Start the Cosmos DB emulator, with Docker. `docker stop es-cosmos-emulator` stops and removes it. The tests expect it at `COSMOS_EMULATOR_ENDPOINT`, or else at `http://localhost:8081`. If nothing answers there, they are skipped, but if `CI` is set they fail
+- `yarn workspace @es-aggregates/postgres db` - Start Postgres 19, with Docker. `docker stop es-postgres` stops and removes it. The tests connect with `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD` and `PGDATABASE`, which default to `localhost`, `5432`, `postgres`, `postgres` and `postgres`. If nothing answers, they are skipped, but if `CI` is set they fail. Each test file creates a schema of its own, and drops it at the end
 - `EventStoreContract` (in `packages/store-tests`) - The tests that every `EventStore` must pass. To run them on a new store, add `"@es-aggregates/store-tests": "*"` to its package's devDependencies, and an `event-store-contract.test.ts` like the one in `packages/cosmos`. If a test fails, fix the store and not the test
 
 ### Publishing & Release

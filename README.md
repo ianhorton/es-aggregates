@@ -1,6 +1,6 @@
 # es-aggregates
 
-A TypeScript library for event-sourced aggregates, following Domain-Driven Design (DDD) principles. An aggregate is stored as the list of events that happened to it, and is read by replaying them. The events can be in DynamoDB, in Cosmos DB, or in any other database that you write a store for.
+A TypeScript library for event-sourced aggregates, following Domain-Driven Design (DDD) principles. An aggregate is stored as the list of events that happened to it, and is read by replaying them. The events can be in DynamoDB, in Cosmos DB, in Postgres, or in any other database that you write a store for.
 
 > **This is the README of 2.0.** For `es-aggregates` 1.x, see [the README of 1.1.1](https://github.com/ianhorton/es-aggregates/blob/v1.1.1/README.md).
 
@@ -9,7 +9,7 @@ A TypeScript library for event-sourced aggregates, following Domain-Driven Desig
 - Aggregate roots and entities whose state comes from events
 - Optimistic concurrency: a write that is based on old state is refused, so nothing is overwritten
 - Field-level encryption of the properties that you choose
-- The same aggregates on DynamoDB, Cosmos DB or a store of your own
+- The same aggregates on DynamoDB, Cosmos DB, Postgres or a store of your own
 
 ## Packages
 
@@ -18,6 +18,7 @@ A TypeScript library for event-sourced aggregates, following Domain-Driven Desig
 | [`@es-aggregates/core`](packages/core/README.md) | Aggregates, events, `Repository`, and the `EventStore` interface | always |
 | [`@es-aggregates/dynamodb`](packages/dynamodb/README.md) | Stores events in DynamoDB | to use DynamoDB |
 | [`@es-aggregates/cosmos`](packages/cosmos/README.md) | Stores events in Azure Cosmos DB for NoSQL | to use Cosmos DB |
+| [`@es-aggregates/postgres`](packages/postgres/README.md) | Stores events in PostgreSQL | to use Postgres |
 
 Each database's package needs that database's SDK too. Its README has the command that installs everything.
 
@@ -118,6 +119,21 @@ const users = new Repository(
 );
 ```
 
+On Postgres too, only `users` differs. This needs a table called `events`, which [the statement in its README](packages/postgres/README.md#table) creates.
+
+```typescript
+import { Repository } from "@es-aggregates/core";
+import { PostgresEventStore } from "@es-aggregates/postgres";
+import { Pool } from "pg";
+
+const pool = new Pool(); // finds the server with PGHOST, PGUSER, PGPASSWORD and the like
+
+const users = new Repository(
+  new PostgresEventStore(pool),
+  () => new User()
+);
+```
+
 If two processes change the same user at once, the second write is rejected with a `ConcurrencyError`. See [how to retry](packages/core/README.md#concurrencyerror-and-how-to-retry).
 
 ## Development
@@ -127,7 +143,7 @@ You need:
 - Node.js 22 or 24, which are the versions that CI tests on
 - Yarn 1
 - Java, for DynamoDB Local, which the tests of `packages/dynamodb` use
-- Docker, if you want to run the tests that use the Cosmos DB emulator
+- Docker, if you want to run the tests that use the Cosmos DB emulator or Postgres
 
 ```bash
 git clone https://github.com/ianhorton/es-aggregates.git
@@ -137,11 +153,12 @@ yarn build
 yarn test
 ```
 
-`yarn test` runs the tests of every package. The first time, it downloads DynamoDB Local. The tests that need the Cosmos DB emulator are skipped if nothing answers at `http://localhost:8081` (but if `CI` is set, they fail). To start it, and to stop it afterwards:
+`yarn test` runs the tests of every package. The first time, it downloads DynamoDB Local. The tests that need the Cosmos DB emulator are skipped if nothing answers at `http://localhost:8081`, and those that need Postgres if nothing answers at `localhost:5432` (but if `CI` is set, they fail). To start them, and to stop them afterwards:
 
 ```bash
 yarn workspace @es-aggregates/cosmos emulator
-docker stop es-cosmos-emulator
+yarn workspace @es-aggregates/postgres db
+docker stop es-cosmos-emulator es-postgres
 ```
 
 To run the tests of one package, such as core:
