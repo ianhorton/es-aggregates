@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns, following Domain-Driven Design (DDD) principles. It stores events in DynamoDB or Cosmos DB, or in any other database for which there is an `EventStore`. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
+`es-aggregates` is a TypeScript library implementing Event Sourcing and Aggregate patterns, following Domain-Driven Design (DDD) principles. It stores events in DynamoDB, Cosmos DB or Postgres, or in any other database for which there is an `EventStore`. The library provides a foundation for building event-driven systems where aggregates serve as consistency boundaries.
 
 The documentation for users is in `README.md`, in the `README.md` of each published package, and in `docs/migrating-from-1.x.md`. Keep it true when behaviour changes, and check that its code samples compile.
 
@@ -66,6 +66,9 @@ Run these at the root; they cover every package.
 - `DynamoEventStore` - The `EventStore` for DynamoDB. Uses DynamoDB transactions for consistency
 - `DynamoRepository` - A `Repository` with a `DynamoEventStore`. Its constructor is that of `Repository` in 1.x
 
+**Postgres** (`packages/postgres/src`)
+- `PostgresEventStore` - The `EventStore` for PostgreSQL. An append is one `INSERT`, so it stores all of the events or none of them. There is no repository for it: use `new Repository(new PostgresEventStore(pool), activator)`
+
 **Event System**
 - `EventBase` - Base class for domain events with encryption support
 - `EventRouter` - Routes events to registered handlers
@@ -84,6 +87,15 @@ Events are stored as items with:
 - `id`, which is the `aggregateVersion` as a string, so that a version can be stored only once
 - Nothing else but the properties of `IPersistedEvent`, and those that Cosmos DB adds (their names start with an underscore)
 - Only values that JSON can hold. Others are refused, so that what is read is what was appended
+
+### Postgres Schema
+Events are stored in a table, one row per event, with:
+- `aggregate_id` (`text COLLATE "C"`)
+- `aggregate_version` (`integer`)
+- `event` (`jsonb`), which holds the whole event
+- `aggregate_id` and `aggregate_version` as the primary key, so that a version can be stored only once
+- The statement that creates the table comes from `PostgresEventStore.createTableSql()`. The store never creates or alters a table
+- Only values that JSON and jsonb can hold. Others are refused, so that what is read is what was appended
 
 ### Key Patterns
 - Aggregates register event handlers in constructor using `this.register(SomeEvent.eventType, handler)`. Events declare `static eventType`; passing the type to `super` is deprecated
