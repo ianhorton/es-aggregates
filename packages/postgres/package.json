@@ -1,0 +1,41 @@
+{
+  "name": "@es-aggregates/postgres",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "scripts": {
+    "prepare": "yarn build",
+    "build": "run-s clean build:tsc",
+    "build:tsc": "tsc -b",
+    "clean": "rimraf dist coverage tsconfig.tsbuildinfo",
+    "db": "docker run -d --rm --name es-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:19",
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "preversion": "yarn test",
+    "postversion": "echo \"Version updated to $npm_package_version\""
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ianhorton/es-aggregates.git",
+    "directory": "packages/postgres"
+  },
+  "bugs": {
+    "url": "https://github.com/ianhorton/es-aggregates/issues"
+  },
+  "homepage": "https://github.com/ianhorton/es-aggregates#readme",
+  "peerDependencies": {
+    "@es-aggregates/core": "^2.0.0",
+    "pg": "^8.0.3"
+  },
+  "devDependencies": {
+    "@es-aggregates/core": "*",
+    "@es-aggregates/store-tests": "*",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "uuid": "^8.3.2"
+  }
+}
