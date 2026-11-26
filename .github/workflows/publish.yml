@@ -1,0 +1,129 @@
+name: Publish
+
+# Publishes to npm the version that the Prepare release workflow has set in core,
+# dynamodb and cosmos, tags the commit, and creates the GitHub release. It skips
+# what is done already, so it is safe to run again after a failure, and it never
+# publishes anything twice. See .github/RELEASE.md.
+
+on:
+  workflow_dispatch:
+
+# one run at a time, and a run in progress is never cancelled
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # which waits for approval, and which only main may use. The trusted
+    # publishers on npm name it, and this file
+    environment: npm
+    permissions:
+      contents: write  # push the tag, and create the GitHub release
+      id-token: write  # publish to npm with trusted publishing (OIDC)
+    env:
+      # in the order in which they are published, as the adapters need core
+      PACKAGES: packages/core packages/dynamodb packages/cosmos
+
+    services:
+      # for the tests of packages/cosmos, which wait for it to start
+      cosmos:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:c274ac17c19a5f74dbadbc99f259bc49a8640a03f6789f54d7f76cbfc33ff6b6 # vnext-latest on 2026-11-25
+        ports:
+        - 8081:8081
+
+    steps:
+    - name: Check that this runs from main
+      run: |
+        if [ "$GITHUB_REF" != refs/heads/main ]; then
+          echo "::error::Run Publish from main, not from $GITHUB_REF."
+          exit 1
+        fi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        registry-url: 'https://registry.npmjs.org'
+        # and no cache, as npm advises for a build that is published
+
+    - name: Check npm
+      # trusted publishing needs npm 11.5.1 or later
+      run: |
+        NPM_VERSION=$(npm --version)
+        if [ "$(printf '%s\n' 11.5.1 "$NPM_VERSION" | sort -V | head -n 1)" != 11.5.1 ]; then
+          echo "::error::Trusted publishing needs npm 11.5.1 or later, and this is npm $NPM_VERSION."
+          exit 1
+        fi
+
+    - name: Checkout code
+      # the commit of main that the run started on, also when the run is run
+      # again: that is the commit that is published and tagged
+      uses: actions/checkout@v4
+
+    - name: Check that Prepare release has run
+      id: version
+      run: |
+        VERSION=$(node scripts/release.js version)
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Install dependencies
+      run: yarn install --frozen-lockfile
+
+    - name: Build project
+      run: yarn build
+
+    - name: Run tests
+      run: yarn test
+
+    - name: Publish to npm
+      # each package that is not on npm yet. With --ignore-scripts, as npm
+      # publish would run the prepare script, which builds again: so it publishes
+      # what was built and tested above
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        for FOLDER in $PACKAGES; do
+          NAME=$(node -p "require('./$FOLDER/package.json').name")
+          # yes or no, and it fails if npm answers anything but the version or 404
+          ON_NPM=$(node scripts/release.js on-npm "$NAME" "$VERSION")
+          if [ "$ON_NPM" = yes ]; then
+            echo "$NAME@$VERSION is on npm already"
+          else
+            (cd "$FOLDER" && npm publish --access public --provenance --ignore-scripts)
+          fi
+        done
+
+    - name: Tag the commit that was published
+      env:
+        TAG: v${{ steps.version.outputs.version }}
+      run: |
+        COMMIT=$(git rev-parse HEAD)
+        # the commit of the tag on GitHub, if it is there: that of an annotated
+        # tag is on the line of TAG^{}, which comes last
+        REFS=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+        TAGGED=$(echo "$REFS" | tail -n 1 | cut -f 1)
+        if [ -z "$TAGGED" ]; then
+          git push origin "$COMMIT:refs/tags/$TAG"
+        elif [ "$TAGGED" != "$COMMIT" ]; then
+          echo "::error::$TAG is on $TAGGED, and not on $COMMIT, which this run checked out. If an earlier run of Publish tagged $TAGGED, re-run that run instead."
+          exit 1
+        else
+          echo "$TAG is on $COMMIT already"
+        fi
+
+    - name: Create the GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        if gh release view "v$VERSION" > /dev/null; then
+          echo "The release v$VERSION is on GitHub already"
+          exit 0
+        fi
+        for FOLDER in $PACKAGES; do
+          NAME=$(node -p "require('./$FOLDER/package.json').name")
+          echo "- [$NAME $VERSION](https://www.npmjs.com/package/$NAME/v/$VERSION)"
+        done > "$RUNNER_TEMP/notes.md"
+        gh release create "v$VERSION" --verify-tag --title "Release v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
