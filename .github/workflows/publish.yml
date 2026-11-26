@@ -1,9 +1,9 @@
 name: Publish
 
 # Tags the commit, publishes to npm the version that the Prepare release workflow
-# has set in core, dynamodb and cosmos, and creates the GitHub release. It skips
-# what is done already, so it is safe to run again after a failure, and it never
-# publishes anything twice. See .github/RELEASE.md.
+# has set in core, dynamodb, cosmos and postgres, and creates the GitHub release.
+# It skips what is done already, so it is safe to run again after a failure, and
+# it never publishes anything twice. See .github/RELEASE.md.
 #
 # It has two jobs, so that the job that can publish runs no code from the
 # packages' dependencies. build installs, builds, tests and packs the packages,
@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # in the order in which they are published, as the adapters need core
-  PACKAGES: packages/core packages/dynamodb packages/cosmos
+  PACKAGES: packages/core packages/dynamodb packages/cosmos packages/postgres
 
 jobs:
   build:
@@ -176,7 +176,7 @@ jobs:
         done
 
     - name: Tag the commit that is about to be published
-      # before Publish to npm, so that the three packages of a version are all
+      # before Publish to npm, so that the four packages of a version are all
       # published from the same commit: a run on another commit stops here,
       # before it publishes anything
       env:
@@ -190,7 +190,7 @@ jobs:
         if [ -z "$TAGGED" ]; then
           git push origin "$COMMIT:refs/tags/$TAG"
         elif [ "$TAGGED" != "$COMMIT" ]; then
-          echo "::error::$TAG is on $TAGGED, and not on $COMMIT, which this run checked out. If an earlier run of Publish tagged $TAGGED, re-run that run instead; if none of the three packages is on npm at $VERSION yet, you can delete $TAG on GitHub, and run Publish again."
+          echo "::error::$TAG is on $TAGGED, and not on $COMMIT, which this run checked out. If an earlier run of Publish tagged $TAGGED, re-run that run instead; if none of the four packages is on npm at $VERSION yet, you can delete $TAG on GitHub, and run Publish again."
           exit 1
         else
           echo "$TAG is on $COMMIT already"
