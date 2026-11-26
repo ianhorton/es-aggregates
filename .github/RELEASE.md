@@ -20,7 +20,7 @@ If Publish fails, it can be run again: it skips what is done already, and it nev
 
 ## Once, before the first release
 
-1. Create the environment `npm` (**Settings → Environments**), with yourself as required reviewer, and `main` as its only deployment branch. If it is missing, a run of Publish creates it, but without a reviewer.
+1. Create the environment `npm` (**Settings → Environments**), with yourself as its only required reviewer, and `main` as its only deployment branch. If it is missing, a run of Publish creates it, but without a reviewer.
 2. For each of the three packages, publish a placeholder `0.0.0` by hand, as npm adds a trusted publisher only to a package that exists. Run `npm publish --access public` in a folder that holds only a `package.json`, such as `{ "name": "@es-aggregates/core", "version": "0.0.0" }`.
 3. Add the trusted publisher of each package. npm asks for your 2FA code.
    ```sh
@@ -28,6 +28,8 @@ If Publish fails, it can be run again: it skips what is done already, and it nev
    npm trust github @es-aggregates/dynamodb --repo ianhorton/es-aggregates --file publish.yml --env npm --allow-publish
    npm trust github @es-aggregates/cosmos --repo ianhorton/es-aggregates --file publish.yml --env npm --allow-publish
    ```
-4. Run Publish within 2 days, or the trusted publishers expire.
+4. Check that nobody else can publish the packages: `npm org ls es-aggregates` should print only `<you> - owner`, and `npm access list collaborators @es-aggregates/core` only `<you>: read-write`. The same goes for `@es-aggregates/dynamodb` and `@es-aggregates/cosmos`.
+5. Run Publish within 2 days, or the trusted publishers expire.
+6. When Publish has worked, set the **Publishing access** of each package (its **Settings** on npmjs.com) to **Require two-factor authentication and disallow tokens**, as npm advises once a trusted publisher works. Then only a maintainer with 2FA, or the Publish workflow, can publish them.
 
 `es-aggregates`, the package of 1.x, stays at 1.1.1 on npm. If 1.x needs a fix, a branch from the tag `v1.1.1` has the workflow that released it.
