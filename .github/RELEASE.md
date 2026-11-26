@@ -1,82 +1,28 @@
 # Release Process
 
-> **Do not run the Release workflow.** It does not support the package layout (`packages/`) yet, and must not be run until it does.
+`@es-aggregates/core`, `@es-aggregates/dynamodb` and `@es-aggregates/cosmos` are released together, with the same version, by two workflows. Each of them runs from `main` only, and only when it is started by hand.
 
-This repository uses GitHub Actions for automated releases following semantic versioning (semver).
+## To release
 
-## How to Release
+1. Run the **Prepare release** workflow with the version, such as `2.0.0`. It sets the version in the three packages, removes their `"private"`, and opens a pull request with that.
+2. Review the pull request, and merge it.
+3. Run the **Publish** workflow.
+4. Approve it in the `npm` environment. It builds and tests `main`, publishes the three packages to npm, tags the commit `vX.Y.Z`, and creates the GitHub release.
 
-### Manual Release (Recommended)
+Prepare release refuses a version that is not of the form X.Y.Z (so no pre-release), that is not higher than the version of each package, that is on npm already, or that the adapters' peer range for `@es-aggregates/core` does not accept. For a new major version, change that range by hand first, in `packages/dynamodb/package.json` and `packages/cosmos/package.json`. Its checks are in `scripts/release.js`, which can be run locally: `node scripts/release.js prepare X.Y.Z`. If they pass, it changes the three `package.json` files, as the workflow does.
 
-1. Go to the **Actions** tab in GitHub
-2. Select the **Release** workflow
-3. Click **Run workflow**
-4. Choose the version bump type:
-   - **patch**: Bug fixes (0.1.0 → 0.1.1)
-   - **minor**: New features (0.1.0 → 0.2.0)
-   - **major**: Breaking changes (0.1.0 → 1.0.0)
-   - **prerelease**: Pre-release versions (0.1.0 → 0.1.1-0)
+If Publish fails, run it again with **Re-run jobs**: it skips what is done already, and it never publishes anything twice.
 
-### What Happens During Release
+## Once, before the first release
 
-The flow makes **zero direct pushes to `main`** (which is branch-protected with
-`enforce_admins=true`):
+1. Create the environment `npm` (**Settings → Environments**), with yourself as required reviewer, and `main` as its only deployment branch. If it is missing, a run of Publish creates it, but without a reviewer.
+2. For each of the three packages, publish a placeholder `0.0.0` by hand, as npm adds a trusted publisher only to a package that exists. Run `npm publish --access public` in a folder that holds only a `package.json`, such as `{ "name": "@es-aggregates/core", "version": "0.0.0" }`.
+3. Add the trusted publisher of each package. npm asks for your 2FA code.
+   ```sh
+   npm trust github @es-aggregates/core --repo ianhorton/es-aggregates --file publish.yml --env npm --allow-publish
+   npm trust github @es-aggregates/dynamodb --repo ianhorton/es-aggregates --file publish.yml --env npm --allow-publish
+   npm trust github @es-aggregates/cosmos --repo ianhorton/es-aggregates --file publish.yml --env npm --allow-publish
+   ```
+4. Run Publish within 2 days, or the trusted publishers expire.
 
-1. **Determine version**: the next version is derived from npm's published latest
-   (the higher of npm latest and `package.json`), then bumped by the chosen type.
-   This avoids republishing an existing version when `main`'s `package.json` lags npm.
-   The run is refused only if that version is already published to npm.
-2. **Build & Test**: project is built and the full suite must pass.
-3. **Establish immutable refs first**: push only the tag `vX.Y.Z` (tags are not
-   covered by the branch protection / ruleset on `main`) plus a short-lived
-   `release/vX.Y.Z` branch, create the **GitHub Release**, and open the reconcile
-   **auto-merging PR** for the `package.json` bump.
-4. **Reconcile `main`**: the PR updates `main`'s `package.json` to the published
-   version (0 approvals → merges once the required checks pass). The release job
-   dispatches `ci.yml` / `pr-validation.yml` on the branch so the bot-opened PR
-   gets its required checks. It is **merged, not squashed**, so the tagged commit
-   stays reachable from `main` (`git describe` / bisect / provenance). `main` is
-   never pushed to directly.
-5. **NPM Publish (last)**: package is published to npm via **OIDC Trusted
-   Publishing** (no `NPM_TOKEN`), with provenance. Publish is the final,
-   most failure-prone step: if it fails, the tag/Release/PR already exist and a
-   re-run re-publishes the same version (it checks out the existing tag).
-
-### Prerequisites
-
-- **OIDC Trusted Publishing** must be configured for this package on npmjs.com
-  (one-time). No `NPM_TOKEN` secret is required.
-- Repo setting **Allow auto-merge** must be enabled (Settings → General →
-  Pull Requests) so the reconcile PR can auto-merge.
-
-### Versioning Strategy
-
-We follow [Semantic Versioning](https://semver.org/):
-
-- **MAJOR**: Incompatible API changes
-- **MINOR**: Backwards-compatible functionality additions
-- **PATCH**: Backwards-compatible bug fixes
-- **PRERELEASE**: Pre-release versions for testing
-
-### Branch Protection
-
-The `main` branch should be protected with the following rules:
-- Require pull request reviews
-- Require status checks to pass (CI workflow)
-- Restrict pushes to the main branch (except for release commits)
-
-### CI/CD Pipeline
-
-- **PR Validation**: Every PR is tested and built
-- **Continuous Integration**: Push to main/develop triggers tests
-- **Automated Release**: Manual trigger with version selection
-- **Dependabot**: Automatic dependency updates with auto-merge for patch/minor versions
-
-### Emergency Hotfix Process
-
-For critical hotfixes:
-1. Create a hotfix branch from the latest release tag
-2. Make necessary changes
-3. Open PR to main branch
-4. After merge, trigger a **patch** release
-5. The hotfix will be included in the next release
+`es-aggregates`, the package of 1.x, stays at 1.1.1 on npm. If 1.x needs a fix, a branch from the tag `v1.1.1` has the workflow that released it.

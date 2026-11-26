@@ -31,11 +31,11 @@ Run these at the root; they cover every package.
 - `EventStoreContract` (in `packages/store-tests`) - The tests that every `EventStore` must pass. To run them on a new store, add `"@es-aggregates/store-tests": "*"` to its package's devDependencies, and an `event-store-contract.test.ts` like the one in `packages/cosmos`. If a test fails, fix the store and not the test
 
 ### Publishing & Release
-- `yarn version --patch` in `packages/core` - Creates new patch version (runs tests first)
-- Releases are automated via GitHub Actions (see `.github/workflows/release.yml`)
-- Use GitHub Actions "Release" workflow to create releases with proper semver versioning (see `.github/RELEASE.md`)
-- Supports patch, minor, major, and prerelease version bumps
-- The Release workflow does not support workspaces yet, and must not be run until it does. Until then, the root `package.json` must have no version, so that the workflow stops before it tags anything, and the packages are `private`, so that they cannot be published
+- core, dynamodb and cosmos are released together, with the same version, by two GitHub Actions workflows that are started by hand, from main (see `.github/RELEASE.md`)
+- "Prepare release" checks the version that it is given, sets it in the three packages, removes their `"private"`, and opens a pull request with that
+- "Publish" runs after that pull request is merged, and waits for approval in the `npm` environment. It publishes to npm each of the three packages that is not there yet, tags the commit `vX.Y.Z`, and creates the GitHub release
+- `node scripts/release.js prepare X.Y.Z` - Runs the checks of Prepare release locally and, if they pass, changes the three `package.json` files as it does
+- The root `package.json` and `packages/store-tests` stay `private`, and are never published
 
 ## Architecture
 
@@ -97,10 +97,9 @@ Events are stored as items with:
 - **dependabot-auto-merge.yml**: Auto-merges patch/minor dependency updates
 
 ### Release Process
-- **release.yml**: Manual workflow for semantic versioning and publishing
-- Supports patch, minor, major, and prerelease version bumps
-- Creates git tags, GitHub releases, and publishes to npm
-- Publishes with OIDC Trusted Publishing, so it needs no `NPM_TOKEN` secret
+- **prepare-release.yml**: Manual workflow, from main only, with the version as its input. Its checks and its version change are in `scripts/release.js`. Commits on a new branch `release/vX.Y.Z` and opens a pull request to main, which it never merges. Then starts ci.yml and pr-validation.yml on the branch, as a pull request opened with `GITHUB_TOKEN` starts no workflows
+- **publish.yml**: Manual workflow, from main only, in the `npm` environment, which waits for approval. Builds and tests main, publishes core, dynamodb and cosmos in that order, skipping each that is on npm already, then pushes the tag `vX.Y.Z` and creates the GitHub release. Safe to run again after a failure
+- Publishes with OIDC Trusted Publishing, with provenance, so it needs no `NPM_TOKEN` secret
 ## OO-First Principle
 
 **Business logic belongs with the object it operates on — as a method on the class — not in free-floating helper functions beside it.**
