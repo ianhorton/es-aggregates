@@ -1,7 +1,6 @@
 {
   "name": "@es-aggregates/core",
-  "version": "1.1.1",
-  "private": true,
+  "version": "2.0.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
