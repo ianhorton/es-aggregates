@@ -33,7 +33,7 @@ Run these at the root; they cover every package.
 ### Publishing & Release
 - core, dynamodb and cosmos are released together, with the same version, by two GitHub Actions workflows that are started by hand, from main (see `.github/RELEASE.md`)
 - "Prepare release" checks the version that it is given, sets it in the three packages, removes their `"private"`, and opens a pull request with that
-- "Publish" runs after that pull request is merged, and waits for approval in the `npm` environment. It publishes to npm each of the three packages that is not there yet, tags the commit `vX.Y.Z`, and creates the GitHub release
+- "Publish" runs after that pull request is merged. Its first job builds, tests and packs the three packages, and cannot publish. Its second job waits for approval in the `npm` environment, then publishes to npm each of the packed packages that is not there yet, tags the commit `vX.Y.Z`, and creates the GitHub release. It installs, builds and tests nothing, so that no code from the packages' dependencies runs where it could publish
 - `node scripts/release.js prepare X.Y.Z` - Runs the checks of Prepare release locally and, if they pass, changes the three `package.json` files as it does
 - The root `package.json` and `packages/store-tests` stay `private`, and are never published
 
@@ -98,7 +98,7 @@ Events are stored as items with:
 
 ### Release Process
 - **prepare-release.yml**: Manual workflow, from main only, with the version as its input. Its checks and its version change are in `scripts/release.js`. Commits on a new branch `release/vX.Y.Z` and opens a pull request to main, which it never merges. Then starts ci.yml and pr-validation.yml on the branch, as a pull request opened with `GITHUB_TOKEN` starts no workflows
-- **publish.yml**: Manual workflow, from main only, in the `npm` environment, which waits for approval. Builds and tests main, publishes core, dynamodb and cosmos in that order, skipping each that is on npm already, then pushes the tag `vX.Y.Z` and creates the GitHub release. Safe to run again after a failure
+- **publish.yml**: Manual workflow, from main only, with two jobs. `build` can only read the repository: it builds, tests and packs main, and uploads the three packages as an artifact. `publish` runs after it, in the `npm` environment, which waits for approval. It installs and builds nothing: it checks that each file holds the expected package and version, publishes core, dynamodb and cosmos in that order, skipping each that is on npm already, then pushes the tag `vX.Y.Z` and creates the GitHub release. Safe to run again after a failure
 - Publishes with OIDC Trusted Publishing, with provenance, so it needs no `NPM_TOKEN` secret
 ## OO-First Principle
 
