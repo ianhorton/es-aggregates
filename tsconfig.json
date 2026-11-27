@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/cosmos" },
-    { "path": "packages/dynamodb" }
+    { "path": "packages/dynamodb" },
+    { "path": "packages/postgres" }
   ]
 }

@@ -1,7 +1,7 @@
 name: Prepare release
 
-# Sets the version to release in core, dynamodb and cosmos, and opens a pull
-# request to main with it. It never merges. After the merge, the Publish
+# Sets the version to release in core, dynamodb, cosmos and postgres, and opens
+# a pull request to main with it. It never merges. After the merge, the Publish
 # workflow publishes the packages. See .github/RELEASE.md.
 
 run-name: Prepare release ${{ inputs.version }}
@@ -62,11 +62,11 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         cat > "$RUNNER_TEMP/body.md" << EOF
-        Sets the version of @es-aggregates/core, @es-aggregates/dynamodb and @es-aggregates/cosmos to $VERSION, and removes "private" from their package.json, so that they can be published. Nothing else changes.
+        Sets the version of @es-aggregates/core, @es-aggregates/dynamodb, @es-aggregates/cosmos and @es-aggregates/postgres to $VERSION, and removes "private" from their package.json, so that they can be published. Nothing else changes.
 
         The Prepare release workflow opened this pull request, and started CI and PR Validation on its branch, as a pull request that a workflow opens starts no workflows.
 
-        After the merge, the next step is the Publish workflow: run it from main, and approve it in the npm environment. It publishes the three packages to npm, tags the release v$VERSION, and creates the GitHub release.
+        After the merge, the next step is the Publish workflow: run it from main, and approve it in the npm environment. It publishes the four packages to npm, tags the release v$VERSION, and creates the GitHub release.
         EOF
         URL=$(gh pr create --base main --head "$BRANCH" --title "chore: release v$VERSION" --body-file "$RUNNER_TEMP/body.md")
         echo "Opened $URL. Review and merge it, then run Publish." >> "$GITHUB_STEP_SUMMARY"

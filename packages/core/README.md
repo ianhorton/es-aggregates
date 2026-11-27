@@ -1,6 +1,6 @@
 # @es-aggregates/core
 
-Aggregates, events, `Repository`, and the `EventStore` interface. There is no database code in it: to store events, add [`@es-aggregates/dynamodb`](../dynamodb/README.md) or [`@es-aggregates/cosmos`](../cosmos/README.md), or [write a store](#writing-a-store).
+Aggregates, events, `Repository`, and the `EventStore` interface. There is no database code in it: to store events, add [`@es-aggregates/dynamodb`](../dynamodb/README.md), [`@es-aggregates/cosmos`](../cosmos/README.md) or [`@es-aggregates/postgres`](../postgres/README.md), or [write a store](#writing-a-store).
 
 - [Install](#install)
 - [Events](#events)

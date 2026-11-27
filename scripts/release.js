@@ -4,10 +4,10 @@
  *
  *   node scripts/release.js prepare 2.0.0
  *     Checks that 2.0.0 can be released. If it can, it sets it as the version of
- *     core, dynamodb and cosmos, and removes "private" from their package.json.
- *     Nothing else in the files changes.
+ *     core, dynamodb, cosmos and postgres, and removes "private" from their
+ *     package.json. Nothing else in the files changes.
  *   node scripts/release.js version
- *     Prints the version of the three packages, but fails if the versions differ
+ *     Prints the version of the four packages, but fails if the versions differ
  *     or if one of the packages is private, as Prepare release has not run then.
  *   node scripts/release.js on-npm @es-aggregates/core 2.0.0
  *     Prints yes if that version is on npm, or no if npm answers 404. It fails if
@@ -22,7 +22,12 @@ const { join } = require("path");
 
 // the packages that are released, in the order in which they are published, as
 // the adapters need core
-const FOLDERS = ["packages/core", "packages/dynamodb", "packages/cosmos"];
+const FOLDERS = [
+  "packages/core",
+  "packages/dynamodb",
+  "packages/cosmos",
+  "packages/postgres",
+];
 
 // a version of the form X.Y.Z, without a pre-release or build, such as 2.0.0
 class Version {

@@ -25,6 +25,22 @@ jobs:
         image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:c274ac17c19a5f74dbadbc99f259bc49a8640a03f6789f54d7f76cbfc33ff6b6 # vnext-latest on 2026-11-25
         ports:
         - 8081:8081
+      # for the tests of packages/postgres
+      postgres:
+        image: postgres@sha256:4ea94de574c17f0372722806c949757050fbb1cd7648410fe45d6bba275cc00e # 19 on 2026-11-26
+        ports:
+        - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        # the steps start once it takes connections over TCP, as the tests do:
+        # without -h, pg_isready passes already while the image sets up the
+        # database, with a server that takes connections on a socket only. And
+        # with -U, the server logs no error for each check
+        options: >-
+          --health-cmd "pg_isready -h localhost -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
 
     steps:
     - name: Checkout code
