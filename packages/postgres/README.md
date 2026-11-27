@@ -126,7 +126,8 @@ export async function signUpAsync(
 ```
 
 - Until the transaction commits, only its own reads have the events.
-- An append of the same version in another transaction waits until this one ends. If it commits, that append is rejected with a `ConcurrencyError`. If it rolls back, that append stores its events.
+- An append of the same version in another transaction waits until this one ends. If it commits, that append is rejected. If it rolls back, that append stores its events.
+- When another transaction stored one of its versions first, an append is rejected with a `ConcurrencyError` at `READ COMMITTED`, which is the default, and at `REPEATABLE READ`. At `SERIALIZABLE`, if both transactions read the aggregate before they appended, it is rejected with the serialization failure of Postgres instead, whose SQLSTATE `40001` is the `code` of the error from pg. The store passes that error on as it is, as Postgres can report it for any statement of a serializable transaction. Roll the transaction back, and run it again from the read.
 - After a `ConcurrencyError`, or any other error, the transaction can do nothing else: roll it back. Then read the aggregate again, in a new transaction.
 - If the transaction rolls back after a write, its events are not stored, but the aggregate no longer has them as changes. So read it again, and do not write that object.
 
@@ -171,6 +172,7 @@ Apart from names with `\u0000` or a lone surrogate, a plain object may have any 
 ## Errors
 
 - `ConcurrencyError`: a version is already stored, or another transaction was storing it and has committed. That is a unique violation, whose SQLSTATE `23505` is the `code` of the error from pg, which is the `cause`. The append stored nothing.
+- The serialization failure `40001` in place of a `ConcurrencyError`, in a `SERIALIZABLE` transaction, if both transactions read the aggregate before they appended. The error from pg is passed on as it is: see [In a transaction](#in-a-transaction). The append stored nothing.
 - Any other error from pg is passed on as it is, such as `42P01` when there is no such table.
 - More than 32767 events are refused before anything is sent.
 
