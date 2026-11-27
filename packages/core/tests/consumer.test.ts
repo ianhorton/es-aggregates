@@ -114,7 +114,17 @@ describe("Apps that use the package", () => {
       .join("\n");
 
   const app = `
-    import { EncryptedProps, EventBase, IEvent } from "@es-aggregates/core";
+    import {
+      EncryptedProps,
+      EventBase,
+      EventStore,
+      IEvent,
+      IPersistedEvent,
+      JsonEventCopy,
+      JsonEventCopyOptions,
+      JsonObject,
+      JsonValue,
+    } from "@es-aggregates/core";
 
     ${eventsWith(rightNames)}
     ${eventsWith(wrongNames, "// @ts-expect-error")}
@@ -265,6 +275,53 @@ describe("Apps that use the package", () => {
     // the class is not an event
     // @ts-expect-error
     export type OfClass = EncryptedProps<typeof UserLeft>;
+
+    // a store that keeps events as JSON, and one that checks their strings too
+    export class JsonEventStore implements EventStore {
+      private readonly copy = new JsonEventCopy();
+      private readonly rows: string[] = [];
+
+      async appendAsync(
+        aggregateId: string,
+        events: IPersistedEvent[],
+        expectedVersion: number
+      ): Promise<void> {
+        const copies: JsonObject[] = events.map(this.copy.of);
+        this.rows.push(...copies.map((copy) => JSON.stringify(copy)));
+      }
+
+      async readAsync(aggregateId: string): Promise<IPersistedEvent[]> {
+        return this.rows.map((row) => JSON.parse(row));
+      }
+    }
+    export const checks: JsonEventCopyOptions = {
+      checkString: (value: string, path: string): void => {
+        if (value.length > 1000) {
+          throw new Error("Cannot store " + path + ", because it is too long.");
+        }
+      },
+      checkPropertyName: (name, path) => undefined,
+    };
+    export const checkingCopy = new JsonEventCopy(checks);
+
+    export const persisted: IPersistedEvent = {
+      aggregateId: "user-1",
+      aggregateVersion: 1,
+      eventType: "UserCreated",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      data: { name: "Ann" },
+    };
+    export const copied: JsonObject = checkingCopy.of(persisted);
+    export const jsonValue: JsonValue = [null, true, 1, "a", { b: [] }];
+
+    // @ts-expect-error: a check is a function
+    new JsonEventCopy({ checkString: true });
+    // @ts-expect-error: it copies an event
+    checkingCopy.of({ eventType: "UserCreated" });
+    // @ts-expect-error: a copy is an object
+    export const notText: string = checkingCopy.of(persisted);
+    // @ts-expect-error: JSON cannot hold a date
+    export const date: JsonValue = new Date();
   `;
 
   it.each([

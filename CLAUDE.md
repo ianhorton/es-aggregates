@@ -58,6 +58,7 @@ Run these at the root; they cover every package.
 **EventStore** (`packages/core/src/store/event-store.ts`)
 - Interface that each database's package implements. Its doc comments are the contract
 - Appends all of the events or none of them, and rejects with `ConcurrencyError` (`packages/core/src/store/concurrency-error.ts`) if a version is already stored
+- `JsonEventCopy` (`packages/core/src/store/json-event-copy.ts`) copies an event into JSON, and refuses what JSON would change or cannot hold. `CosmosEventStore` and `PostgresEventStore` use it
 
 **Cosmos DB** (`packages/cosmos/src`)
 - `CosmosEventStore` - The `EventStore` for Cosmos DB. Uses transactional batches for consistency. There is no repository for it: use `new Repository(new CosmosEventStore(container), activator)`

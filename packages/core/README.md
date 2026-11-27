@@ -434,6 +434,8 @@ export class InMemoryEventStore implements EventStore {
 }
 ```
 
+A store that keeps events as JSON can copy each one with `JsonEventCopy`, as the stores for Cosmos DB and Postgres do. `new JsonEventCopy().of(event)` returns a copy of the event that JSON can hold, without its undefined values and the properties that are functions. It throws if the event has a value that JSON would change or cannot hold, such as a Date, and the message says where the value is. If the database cannot hold some strings or property names, give the constructor a `checkString` or a `checkPropertyName` that throws to refuse one.
+
 In a database:
 
 - Make the aggregate and the version together a unique key, and insert. Never overwrite.

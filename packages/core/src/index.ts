@@ -11,3 +11,4 @@ export * from "./event/models/persisted-event";
 
 export * from "./store/concurrency-error";
 export * from "./store/event-store";
+export * from "./store/json-event-copy";

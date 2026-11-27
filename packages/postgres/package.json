@@ -28,7 +28,7 @@
   },
   "homepage": "https://github.com/ianhorton/es-aggregates#readme",
   "peerDependencies": {
-    "@es-aggregates/core": "^2.0.0",
+    "@es-aggregates/core": "^2.1.0",
     "pg": "^8.0.3"
   },
   "devDependencies": {
