@@ -28,7 +28,7 @@
   "homepage": "https://github.com/ianhorton/es-aggregates#readme",
   "peerDependencies": {
     "@azure/cosmos": "^4.5.0",
-    "@es-aggregates/core": "^2.0.0"
+    "@es-aggregates/core": "^2.1.0"
   },
   "devDependencies": {
     "@azure/cosmos": "^4.10.2",

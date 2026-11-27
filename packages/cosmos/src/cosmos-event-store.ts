@@ -2,13 +2,9 @@ import {
   ConcurrencyError,
   EventStore,
   IPersistedEvent,
+  JsonEventCopy,
+  JsonObject,
 } from "@es-aggregates/core";
-
-type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
-
-interface JsonObject {
-  [name: string]: JsonValue;
-}
 
 interface CreateOperation {
   operationType: "Create";
@@ -115,6 +111,9 @@ export class CosmosEventStore implements EventStore {
 
   // the clients of which a failure to read the account has been logged
   private static readonly logged = new WeakSet<Client>();
+
+  // copies each event into JSON, and refuses what JSON would change or cannot hold
+  private readonly copy = new JsonEventCopy();
 
   constructor(private readonly container: EventContainer) {}
 
@@ -384,7 +383,7 @@ export class CosmosEventStore implements EventStore {
       : [];
 
   private toOperation = (event: IPersistedEvent): CreateOperation => {
-    const item = this.toJson(event, event.eventType) as JsonObject;
+    const item = this.copy.of(event);
     const reserved = Object.keys(item).find(this.isReserved);
     if (reserved !== undefined) {
       throw new Error(
@@ -395,70 +394,6 @@ export class CosmosEventStore implements EventStore {
       operationType: "Create",
       resourceBody: { ...item, id: `${event.aggregateVersion}` },
     };
-  };
-
-  /**
-   * A copy of the value that will be read back as it is. It leaves out what
-   * DynamoEventStore leaves out: undefined values, and properties that are functions.
-   */
-  private toJson = (value: unknown, path: string): JsonValue => {
-    if (this.isPlainArray(value)) {
-      const copy: JsonValue[] = [];
-      value.forEach((element, index) => {
-        if (element !== undefined) {
-          copy.push(this.toJson(element, `${path}[${index}]`));
-        }
-      });
-      return copy;
-    }
-
-    if (this.isPlainObject(value)) {
-      // it has no prototype, so that __proto__ is a property like any other
-      const copy: JsonObject = Object.create(null);
-      for (const [name, property] of Object.entries(value)) {
-        if (property !== undefined && typeof property !== "function") {
-          copy[name] = this.toJson(property, `${path}.${name}`);
-        }
-      }
-      return copy;
-    }
-
-    if (
-      value === null ||
-      typeof value === "boolean" ||
-      typeof value === "string" ||
-      Number.isFinite(value)
-    ) {
-      return value as JsonValue;
-    }
-
-    throw new Error(
-      `Cannot store ${path}, because JSON cannot hold ${this.describe(value)}.`
-    );
-  };
-
-  // These two do not compare a prototype with Array.prototype or Object.prototype,
-  // because each vm context has its own. Array.prototype is itself an array, and
-  // Object.prototype has no prototype
-
-  private isPlainArray = (value: unknown): value is unknown[] =>
-    Array.isArray(value) && Array.isArray(Object.getPrototypeOf(value));
-
-  private isPlainObject = (
-    value: unknown
-  ): value is Record<string, unknown> => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return false;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === null || Object.getPrototypeOf(prototype) === null;
-  };
-
-  private describe = (value: unknown): string => {
-    if (typeof value === "object") {
-      return `an instance of ${(value as object).constructor?.name}`;
-    }
-    return typeof value === "number" ? `${value}` : `a ${typeof value}`;
   };
 
   private toEvent = (item: JsonObject): IPersistedEvent => {
