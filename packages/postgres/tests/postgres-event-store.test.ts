@@ -1401,6 +1401,132 @@ describe("PostgresEventStore", () => {
       });
     });
 
+    describe("when two transactions at the same isolation level append the same version", () => {
+      // Two transactions at the level, each with a client of its own. Both begin, and
+      // each reads the aggregate, which is at version 0, if it is to. The first appends
+      // version 1. The second appends versions 1 and 2, while the first is open, so that
+      // it waits until the first commits, or after the first has committed. Then the
+      // second commits, which Postgres turns into a rollback if its append was rejected.
+      const appendInTwoTransactionsAsync = async (options: {
+        level: string;
+        firstReads: boolean;
+        secondReads: boolean;
+        secondWaits: boolean;
+      }) => {
+        const id = v4();
+        // the event that is stored before, and the one that the first appends
+        const stored = [event(id, 0), event(id, 1, "first")];
+        await store.appendAsync(id, [stored[0]], 0);
+        const first = new Client(Postgres.config);
+        const second = new Client(Postgres.config);
+        const firstStore = new PostgresEventStore(first, { table });
+        // what pg rejects with in the second transaction
+        const thrown: unknown[] = [];
+        const secondStore = new PostgresEventStore(
+          {
+            query: (text, values) =>
+              second.query(text, values).catch((error) => {
+                thrown.push(error);
+                throw error;
+              }),
+          },
+          { table }
+        );
+        await first.connect();
+        await second.connect();
+
+        try {
+          await first.query(`BEGIN ISOLATION LEVEL ${options.level}`);
+          await second.query(`BEGIN ISOLATION LEVEL ${options.level}`);
+          if (options.firstReads) {
+            await firstStore.readAsync(id);
+          }
+          if (options.secondReads) {
+            await secondStore.readAsync(id);
+          }
+          await firstStore.appendAsync(id, [stored[1]], 1);
+
+          const appendSecondAsync = () =>
+            secondStore
+              .appendAsync(id, eventsOf(id, [1, 2], "second"), 1)
+              .catch((e) => e);
+          let error;
+          if (options.secondWaits) {
+            const append = appendSecondAsync();
+            await postgres.waitUntilBlockedAsync(first, 1);
+            await first.query("COMMIT");
+            error = await append;
+          } else {
+            await first.query("COMMIT");
+            error = await appendSecondAsync();
+          }
+          await second.query("COMMIT");
+
+          return { id, error, thrown, stored };
+        } finally {
+          await first.end();
+          await second.end();
+        }
+      };
+
+      describe.each([
+        {
+          timing: "while the first is open, so that it waits",
+          secondWaits: true,
+        },
+        { timing: "after the first has committed", secondWaits: false },
+      ])("and the second appends $timing", ({ secondWaits }) => {
+        it.each([
+          ["READ COMMITTED", "both have", true, true],
+          ["REPEATABLE READ", "both have", true, true],
+          ["SERIALIZABLE", "only the first has", true, false],
+          ["SERIALIZABLE", "only the second has", false, true],
+        ])(
+          "should reject the second with a ConcurrencyError at %s, when %s read the aggregate",
+          async (level, _, firstReads, secondReads) => {
+            // act
+            const { id, error, stored } = await appendInTwoTransactionsAsync({
+              level,
+              firstReads,
+              secondReads,
+              secondWaits,
+            });
+
+            // assert
+            expect(error).toBeInstanceOf(ConcurrencyError);
+            expect(error).toMatchObject({
+              aggregateId: id,
+              expectedVersion: 1,
+            });
+            expect(error.cause).toMatchObject({ code: "23505" });
+            // the second stored nothing
+            expect(await store.readAsync(id)).toStrictEqual(stored);
+          }
+        );
+
+        it("should reject the second with the serialization failure of Postgres at SERIALIZABLE, when both have read the aggregate", async () => {
+          // act
+          const { id, error, thrown, stored } =
+            await appendInTwoTransactionsAsync({
+              level: "SERIALIZABLE",
+              firstReads: true,
+              secondReads: true,
+              secondWaits,
+            });
+
+          // assert
+          // the error from pg, as it is, and not a ConcurrencyError
+          expect(thrown).toHaveLength(1);
+          expect(error).toBe(thrown[0]);
+          expect(error).not.toBeInstanceOf(ConcurrencyError);
+          // serialization_failure
+          expect(error).toMatchObject({ code: "40001", severity: "ERROR" });
+          // the second stored nothing
+          expect(await store.readAsync(id)).toStrictEqual(stored);
+        });
+      });
+    });
+
     describe("the table", () => {
       it("should be the one that createTableSql creates", async () => {
         expect(await postgres.columnsAsync("events")).toEqual([
