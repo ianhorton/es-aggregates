@@ -1,7 +1,6 @@
 {
   "name": "@es-aggregates/postgres",
-  "version": "0.0.0",
-  "private": true,
+  "version": "2.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
